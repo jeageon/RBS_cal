@@ -1,0 +1,1806 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RBS_cal (OSTIR Web UI)</title>
+    <style>
+      :root {
+        --bg: radial-gradient(120deg, #f4f8ff 0%, #e6f0ff 45%, #d5e8ff 100%);
+        --panel: rgba(255, 255, 255, 0.9);
+        --ink: #1e2a40;
+        --muted: #4f5d78;
+        --line: rgba(29, 78, 216, 0.22);
+        --brand: #1d4ed8;
+        --brand-2: #2563eb;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        color: var(--ink);
+        font-family: "Poppins", "Noto Sans KR", "Segoe UI", Arial, sans-serif;
+        background: var(--bg);
+      }
+
+      .wrap {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 28px 18px 40px;
+        animation: fadeIn 0.6s ease;
+      }
+
+      .header {
+        margin-bottom: 16px;
+        background: linear-gradient(120deg, #1d4ed8, #0ea5e9);
+        color: #fff;
+        border-radius: 14px;
+        padding: 18px 20px;
+        box-shadow: 0 12px 28px rgba(30, 64, 175, 0.2);
+      }
+
+      .header h1 {
+        margin: 0;
+        font-size: 28px;
+      }
+
+      .header p {
+        margin: 8px 0 0;
+        opacity: 0.95;
+      }
+
+      .tab-wrap {
+        display: flex;
+        gap: 8px;
+        margin-top: 12px;
+        flex-wrap: wrap;
+      }
+
+      .tab-btn {
+        border: 1px solid rgba(15, 63, 146, 0.3);
+        background: rgba(255, 255, 255, 0.55);
+        color: var(--ink);
+        border-radius: 10px 10px 0 0;
+        padding: 8px 14px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      .tab-btn:hover {
+        background: rgba(255, 255, 255, 0.85);
+      }
+
+      .tab-btn.active {
+        background: linear-gradient(120deg, #1d4ed8, #2563eb);
+        color: #fff;
+        border-color: #1d4ed8;
+        box-shadow: 0 2px 0 #1d4ed8, 0 8px 18px rgba(29, 78, 216, 0.22);
+      }
+
+      .tab-panel {
+        display: none;
+      }
+
+      .tab-panel.active {
+        display: block;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: 380px 1fr;
+        gap: 18px;
+      }
+
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        backdrop-filter: blur(2px);
+        box-shadow: 0 10px 24px rgba(21, 35, 65, 0.08);
+        animation: liftIn 0.5s ease both;
+      }
+
+      .card h2 {
+        margin: 0;
+        padding: 16px 18px;
+        border-bottom: 1px solid var(--line);
+        font-size: 18px;
+      }
+
+      .body {
+        padding: 16px 18px;
+      }
+
+      .mode-row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-bottom: 12px;
+      }
+
+      .mode-item {
+        flex: 1;
+        min-width: 120px;
+      }
+
+      .field-block {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 6px;
+        margin-bottom: 10px;
+      }
+
+      .field-line {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--ink);
+        font-weight: 700;
+      }
+
+      label {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 10px;
+        cursor: pointer;
+      }
+
+      label.field-block {
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 6px;
+        cursor: default;
+      }
+
+      textarea,
+      input[type='text'],
+      input[type='number'],
+      input[type='file'] {
+        width: 100%;
+        border: 1px solid #c4d4ff;
+        border-radius: 10px;
+        padding: 10px 12px;
+        margin-top: 6px;
+        font-size: 14px;
+        color: var(--ink);
+        background: #fefeff;
+      }
+
+      textarea {
+        min-height: 280px;
+        resize: vertical;
+        font-family: "Courier New", ui-monospace, monospace;
+      }
+
+      .hidden {
+        display: none;
+      }
+
+      .inline-group {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+
+      .check-row {
+        margin: 8px 0 14px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      .check-row label {
+        margin: 0;
+      }
+
+      .btn {
+        border: none;
+        color: white;
+        border-radius: 10px;
+        padding: 12px 14px;
+        font-weight: 700;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        background: linear-gradient(120deg, var(--brand), var(--brand-2));
+      }
+
+      .btn:disabled {
+        opacity: 0.6;
+        cursor: progress;
+      }
+
+      .status {
+        margin-top: 10px;
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1px dashed var(--line);
+        background: #f0f5ff;
+        color: #223a66;
+        min-height: 36px;
+        font-size: 14px;
+      }
+
+      .progress-wrap {
+        margin-top: 10px;
+        width: 100%;
+        height: 7px;
+        border-radius: 999px;
+        overflow: hidden;
+        background: #d8e4ff;
+        display: none;
+      }
+
+      .progress-bar {
+        width: 35%;
+        height: 100%;
+        border-radius: 999px;
+        background: linear-gradient(120deg, #1d4ed8, #0ea5e9);
+        animation: progressRun 1.1s ease-in-out infinite;
+      }
+
+      @keyframes progressRun {
+        0% {
+          transform: translateX(-45%);
+        }
+        100% {
+          transform: translateX(260%);
+        }
+      }
+
+      .help-panel {
+        margin-top: 12px;
+        border: 1px solid #d9e4ff;
+        border-radius: 10px;
+        background: #f8fbff;
+        color: var(--muted);
+        padding: 12px;
+      }
+
+      .help-panel summary {
+        font-weight: 700;
+        color: var(--ink);
+        cursor: pointer;
+      }
+
+      .help-list {
+        margin: 10px 0 0;
+        padding-left: 16px;
+      }
+
+      .help-list li {
+        margin: 6px 0;
+        line-height: 1.4;
+      }
+
+      .field-hint {
+        display: block;
+        margin-top: 6px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .field-info {
+        display: inline-flex;
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        justify-content: center;
+        align-items: center;
+        background: #e4ecff;
+        color: #2e4a86;
+        font-size: 11px;
+        font-weight: 700;
+        cursor: help;
+      }
+
+      .advanced-settings {
+        margin-top: 12px;
+        border: 1px solid #d4e2ff;
+        border-radius: 10px;
+        background: #fbfdff;
+        padding: 0;
+      }
+
+      .advanced-settings summary {
+        padding: 10px 12px;
+        cursor: pointer;
+        font-weight: 700;
+        color: var(--ink);
+      }
+
+      .advanced-body {
+        padding: 10px 12px 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .command-accordion {
+        margin-top: 12px;
+      }
+
+      .command-accordion summary {
+        font-weight: 700;
+        color: var(--ink);
+        list-style: none;
+      }
+
+      .command-accordion summary::-webkit-details-marker {
+        display: none;
+      }
+
+      .command-accordion code {
+        display: block;
+        margin-top: 8px;
+        padding: 8px;
+        border-radius: 8px;
+        color: #1e2f54;
+        background: #f3f7ff;
+        border: 1px solid #d8e3ff;
+        overflow-x: auto;
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+
+      .summary-grid {
+        margin-top: 12px;
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .summary-card {
+        border: 1px solid #d6e0ff;
+        border-radius: 10px;
+        padding: 10px 12px;
+        background: #f8fbff;
+      }
+
+      .summary-label {
+        color: #4f5d78;
+        font-size: 12px;
+      }
+
+      .summary-value {
+        margin-top: 4px;
+        font-size: 18px;
+        font-weight: 700;
+        color: #0f2c5f;
+      }
+
+      .summary-meta {
+        margin-top: 4px;
+        color: #5f7291;
+        font-size: 12px;
+      }
+
+      .chart-wrap {
+        margin-top: 12px;
+        border: 1px solid #d6e4ff;
+        border-radius: 10px;
+        padding: 10px;
+        background: #fbfdff;
+      }
+
+      .chart-title {
+        margin: 0;
+        color: #334a76;
+        font-weight: 700;
+        font-size: 13px;
+      }
+
+      #exprChart {
+        margin-top: 8px;
+        width: 100%;
+        height: 250px;
+        min-height: 250px;
+        display: block;
+        border-radius: 8px;
+        border: 1px solid #dbe7ff;
+      }
+
+      #designTraceChart,
+      #designMoveChart {
+        margin-top: 8px;
+        width: 100%;
+        height: 240px;
+        min-height: 240px;
+        display: block;
+        border-radius: 8px;
+        border: 1px solid #dbe7ff;
+      }
+
+      .chart-point-info {
+        margin-top: 8px;
+        border: 1px dashed #bfd0ff;
+        border-radius: 8px;
+        background: #f7fbff;
+        color: var(--muted);
+        padding: 10px 12px;
+        min-height: 52px;
+        font-size: 13px;
+        white-space: pre-line;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+      }
+
+      .design-viz-grid {
+        margin-top: 12px;
+        display: grid;
+        gap: 12px;
+        grid-template-columns: 2fr 1fr;
+      }
+
+      .design-diag-list {
+        margin: 0;
+        padding-left: 18px;
+        list-style: disc;
+      }
+
+      .design-diag-list li {
+        margin: 4px 0;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.4;
+      }
+
+      .design-restart-wrap {
+        overflow: auto;
+        max-height: 180px;
+      }
+
+      tr.expr-hot {
+        background: #f0fdf4;
+      }
+
+      tr.dg-stable {
+        background: #f5f0ff;
+      }
+
+      tr.expr-hot.dg-stable {
+        background: #e7fbec;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+        margin-top: 12px;
+        table-layout: auto;
+      }
+
+      th,
+      td {
+        border-bottom: 1px solid #dbe6ff;
+        padding: 8px 7px;
+        text-align: left;
+        white-space: normal;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+      }
+
+      .table-wrap {
+        overflow-x: auto;
+        margin-top: 12px;
+        width: 100%;
+      }
+
+      th {
+        background: #f1f5ff;
+        font-weight: 700;
+      }
+
+      tr:hover {
+        background: #f7f9ff;
+      }
+
+      tr.expr-row-active {
+        background: #ecf2ff !important;
+        outline: 1px solid #9fb9ff;
+      }
+
+      .design-row {
+        cursor: pointer;
+      }
+
+      .design-row td:first-child span.design-toggle {
+        font-size: 11px;
+        border: 1px solid #aac0ee;
+        color: #1f4f9a;
+        background: #eff5ff;
+        display: inline-block;
+        padding: 1px 7px;
+        border-radius: 999px;
+        margin-right: 8px;
+        cursor: pointer;
+      }
+
+      .design-row:hover td {
+        background: #f4f8ff;
+      }
+
+      .design-row-expanded td:first-child span.design-toggle {
+        background: #1d4ed8;
+        border-color: #1d4ed8;
+        color: #fff;
+      }
+
+      tr.design-detail-row td {
+        background: #f8fbff;
+        border-top: 0;
+      }
+
+      tr.design-detail-row {
+        display: none;
+      }
+
+      tr.design-detail-row.active {
+        display: table-row;
+      }
+
+      .design-detail-cell {
+        padding: 8px 10px;
+        font-size: 12px;
+        color: #3d4f73;
+      }
+
+      .design-detail-seq-label {
+        display: inline-block;
+        color: #1f4f9a;
+        font-weight: 700;
+        margin-right: 8px;
+      }
+
+      .design-detail-seq {
+        margin-top: 6px;
+        padding: 8px;
+        border-radius: 8px;
+        background: #ffffff;
+        border: 1px solid #dce7ff;
+        overflow-wrap: anywhere;
+        word-break: break-all;
+        font-family: "Courier New", ui-monospace, monospace;
+        white-space: pre-wrap;
+      }
+
+      .muted {
+        color: var(--muted);
+      }
+
+      .summary {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        margin-top: 12px;
+        flex-wrap: wrap;
+      }
+
+      .summary > * {
+        min-width: 0;
+      }
+
+      .link {
+        color: #0b3d91;
+        text-decoration: none;
+        font-weight: 700;
+        white-space: nowrap;
+        flex-shrink: 0;
+      }
+
+      .loader {
+        border: 3px solid #e0ecff;
+        border-top: 3px solid var(--brand);
+        border-radius: 50%;
+        width: 16px;
+        height: 16px;
+        animation: spin 1s linear infinite;
+        display: inline-block;
+        margin-right: 8px;
+        vertical-align: middle;
+        opacity: 0;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      @keyframes fadeIn {
+        from {
+          opacity: 0;
+          transform: translateY(12px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      @keyframes liftIn {
+        from {
+          transform: translateY(6px);
+          opacity: 0;
+        }
+        to {
+          transform: translateY(0);
+          opacity: 1;
+        }
+      }
+
+      @media (max-width: 900px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+
+        .design-viz-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .summary-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .inline-group {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <section class="header">
+        <h1>RBS_cal Web UI</h1>
+        <p>Run OSTIR prediction with a form-first workflow for single sequence or FASTA/CSV input.</p>
+      </section>
+      <div class="tab-wrap">
+        <button class="tab-btn active" type="button" data-tab="calculator">RBS Calculator</button>
+        <button class="tab-btn" type="button" data-tab="designer">RBS Designer</button>
+      </div>
+
+      <section id="calculatorTab" class="tab-panel active">
+        <div class="grid">
+          <section class="card">
+            <h2>Input &amp; Parameters</h2>
+            <div class="body">
+              <div class="mode-row">
+                <label class="mode-item">
+                  <input type="radio" name="inputMode" value="sequence" checked />
+                  Sequence text
+                </label>
+                <label class="mode-item">
+                  <input type="radio" name="inputMode" value="file" />
+                  FASTA / CSV upload
+                </label>
+              </div>
+
+              <form id="ostir-form">
+                <label class="field-block">
+                  <span class="field-line">
+                    Sequence Input (DNA/RNA)
+                    <span class="field-info" title="직접 서열을 붙여넣기 하면 1개 입력으로 바로 예측할 수 있습니다. FASTA 업로드는 아래 파일 업로드 모드를 사용하세요.">ⓘ</span>
+                  </span>
+                  <textarea id="sequenceText" name="sequenceText" placeholder="서열을 붙여넣으세요 (예: TTCTAGATG...)" required></textarea>
+                </label>
+
+                <label id="fileInputWrap" class="hidden field-block">
+                  <span class="field-line">
+                    Input file (FASTA / CSV)
+                    <span class="field-info" title="FASTA(.fa/.fasta/.fas/.fna/.ffn) 또는 CSV(.csv/.txt)를 업로드하세요.">ⓘ</span>
+                  </span>
+                  <input type="file" id="sequenceFile" name="sequenceFile" accept=".fasta,.fa,.fas,.fna,.ffn,.csv,.txt" />
+                </label>
+
+                <details class="advanced-settings">
+                  <summary>고급 설정</summary>
+                  <div class="advanced-body">
+                    <div class="inline-group" style="margin-top: 10px">
+                      <label class="field-block">
+                        <span class="field-line">
+                          Start (5')
+                          <span class="field-info" title="예측 시작 인덱스(1-base). 비워두면 자동 판단합니다.">ⓘ</span>
+                        </span>
+                        <input type="number" name="start" placeholder="optional" min="1" />
+                      </label>
+                      <label class="field-block">
+                        <span class="field-line">
+                          End (3')
+                          <span class="field-info" title="예측 종료 인덱스(1-base). 비워두면 자동 판단합니다.">ⓘ</span>
+                        </span>
+                        <input type="number" name="end" placeholder="optional" min="1" />
+                      </label>
+                    </div>
+
+                    <label class="field-block">
+                      <span class="field-line">
+                        anti-Shine-Dalgarno
+                        <span class="field-info" title="aSD 서열을 바꾸면 에너지 계산 기준이 바뀝니다. 기본값: ACCTCCTTA">ⓘ</span>
+                      </span>
+                      <input type="text" name="antiSd" value="ACCTCCTTA" />
+                    </label>
+
+                    <label class="field-block">
+                      <span class="field-line">
+                        Threads
+                        <span class="field-info" title="동시 실행 스레드 수(최대 64). 긴 서열에서 2~8부터 시작해 올리세요.">ⓘ</span>
+                      </span>
+                      <input type="number" name="threads" value="1" min="1" max="64" />
+                    </label>
+
+                    <div class="check-row">
+                      <label><input type="checkbox" name="printSequence" value="1" /> Include input sequence</label>
+                      <label><input type="checkbox" name="printASD" value="1" /> Include aSD in output</label>
+                    </div>
+                  </div>
+                </details>
+
+                <details class="help-panel">
+                  <summary>파라미터 빠른 설명</summary>
+                  <ul class="help-list">
+                    <li>입력 방식: Sequence는 직접 입력, FASTA/CSV는 파일 업로드 사용.</li>
+                    <li>Start/End는 1-based 좌표입니다.</li>
+                    <li>aSD는 필요 시 종/조건에 맞게 조절.</li>
+                    <li>Threads는 긴 서열 처리 속도에 영향을 줍니다.</li>
+                  </ul>
+                </details>
+
+                <div id="progressWrap" class="progress-wrap">
+                  <div class="progress-bar"></div>
+                </div>
+
+                <button id="runBtn" class="btn" type="submit">
+                  <span id="spinner" class="loader"></span>
+                  Run prediction
+                </button>
+              </form>
+
+              <div id="status" class="status muted">Ready</div>
+            </div>
+          </section>
+
+          <section class="card">
+            <h2>OSTIR Output</h2>
+            <div class="body">
+              <div class="summary">
+                <div id="resultSummary" class="muted">No output yet</div>
+                <a id="downloadLink" href="#" class="link hidden">Download CSV</a>
+              </div>
+              <div id="topSummary" class="summary-grid" aria-live="polite"></div>
+              <div class="chart-wrap">
+                <div class="chart-title">start_position vs expression</div>
+                <div id="exprChart"></div>
+                <div id="chartPointInfo" class="chart-point-info">
+                  막대를 클릭하면 해당 start_position의 상세 정보를 표시합니다.
+                </div>
+              </div>
+              <details id="commandPanel" class="help-panel command-accordion" style="display: none">
+                <summary>실행 명령 보기</summary>
+                <code id="commandText"></code>
+              </details>
+
+              <div class="table-wrap">
+                <table id="resultTable" aria-live="polite">
+                  <thead id="resultHead"></thead>
+                  <tbody id="resultBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section id="designerTab" class="tab-panel">
+        <div class="grid">
+          <section class="card">
+            <h2>Designer Input</h2>
+            <div class="body">
+              <form id="rbs-design-form">
+                <label class="field-block">
+                  <span class="field-line">
+                    Pre-sequence (필수, RBS 앞쪽 고정 구간)
+                    <span class="field-info" title="ATG 이전 upstream 서열을 입력하세요. 설계된 RBS는 이 구간 뒤에 넣어집니다.">ⓘ</span>
+                  </span>
+                  <textarea id="preSequence" name="preSequence" placeholder="예: TTGACA...GGAGG..." required></textarea>
+                </label>
+                <label class="field-block">
+                  <span class="field-line">
+                    CDS (필수, Start codon 포함)
+                    <span class="field-info" title="전사 시작부터 번역될 CDS를 붙여넣으세요. ATG/GTG/TTG로 시작해야 합니다.">ⓘ</span>
+                  </span>
+                  <textarea id="postSequence" name="postSequence" placeholder="예: ATGAAA... (start codon으로 시작)" required></textarea>
+                </label>
+                <label class="field-block">
+                  <span class="field-line">
+                    Target expression
+                    <span class="field-info" title="OSTIR에서 나오는 expression의 목표값(무단위 상대값)입니다. 1은 기준값이므로, 계산된 예측값보다 크면 높은 발현, 작으면 낮은 발현을 의미합니다.">ⓘ</span>
+                  </span>
+                  <input type="number" id="targetExpression" name="targetExpression" min="0.000001" step="any" value="1" required />
+                </label>
+                <details class="advanced-settings">
+                  <summary>디자인 상세 설정</summary>
+                  <div class="advanced-body">
+                    <label class="field-block">
+                    <span class="field-line">
+                      aSD (anti-Shine-Dalgarno)
+                      <span class="field-info" title="예측 시 사용할 aSD 서열입니다. 기본값: ACCTCCTTA">ⓘ</span>
+                    </span>
+                      <input type="text" name="antiSd" value="ACCTCCTTA" />
+                    </label>
+                    <label class="field-block">
+                    <span class="field-line">
+                      Threads
+                      <span class="field-info" title="각 후보 시퀀스 평가 시 OSTIR 병렬 스레드 수. 후보 수가 크면 1 또는 2 추천.">ⓘ</span>
+                    </span>
+                    <input type="number" name="threads" value="1" min="1" max="64" />
+                  </label>
+                    <div class="inline-group" style="margin-top: 10px">
+                      <label class="field-block">
+                        <span class="field-line">
+                          RBS length min
+                          <span class="field-info" title="설계할 RBS 최소 길이 (4~20).">ⓘ</span>
+                        </span>
+                        <input type="number" name="rbsMinLength" value="6" min="4" max="20" />
+                      </label>
+                      <label class="field-block">
+                        <span class="field-line">
+                          RBS length max
+                          <span class="field-info" title="설계할 RBS 최대 길이 (4~20).">ⓘ</span>
+                        </span>
+                        <input type="number" name="rbsMaxLength" value="12" min="4" max="20" />
+                      </label>
+                    </div>
+                    <div class="inline-group">
+                      <label class="field-block">
+                        <span class="field-line">
+                          Iterations
+                          <span class="field-info" title="최대 탐색 횟수(클 수록 정교하지만 시간이 늘어납니다).">ⓘ</span>
+                        </span>
+                        <input type="number" name="iterations" value="40" min="1" max="200" />
+                      </label>
+                      <label class="field-block">
+                        <span class="field-line">
+                          Top candidates
+                          <span class="field-info" title="표시할 상위 후보 개수입니다.">ⓘ</span>
+                        </span>
+                        <input type="number" name="topCandidates" value="10" min="1" max="50" />
+                      </label>
+                    </div>
+                    <label class="field-block">
+                      <span class="field-line">
+                        Random seed (optional)
+                        <span class="field-info" title="같은 파라미터에서 같은 결과를 재현하고 싶을 때 seed 값을 넣으세요.">ⓘ</span>
+                      </span>
+                      <input type="text" name="randomSeed" placeholder="optional" />
+                    </label>
+                  </div>
+                </details>
+
+                <div id="designProgressWrap" class="progress-wrap">
+                  <div class="progress-bar"></div>
+                </div>
+                <button id="designRunBtn" class="btn" type="submit">
+                  <span id="designSpinner" class="loader"></span>
+                  Run RBS designer
+                </button>
+              </form>
+              <div id="designStatus" class="status muted">Ready</div>
+            </div>
+          </section>
+
+          <section class="card">
+            <h2>Design Output</h2>
+            <div class="body">
+              <div class="summary">
+                <div id="designResultSummary" class="muted">No output yet</div>
+                <a id="designDownloadLink" href="#" class="link hidden">Download CSV</a>
+              </div>
+              <div id="designTopSummary" class="summary-grid" aria-live="polite"></div>
+              <div id="designDiagnosticsSummary" class="summary-grid" aria-live="polite"></div>
+              <div class="design-viz-grid">
+                <div class="chart-wrap">
+                  <div class="chart-title">Adaptive SA trace</div>
+                  <div id="designTraceChart"></div>
+                  <div id="designTraceInfo" class="chart-point-info">온도/수락율/에러 로그를 표시합니다.</div>
+                </div>
+                <div class="chart-wrap">
+                  <div class="chart-title">Move-type count</div>
+                  <div id="designMoveChart"></div>
+                  <div id="designMoveInfo" class="chart-point-info">변이 유형별 시도/수락 수.</div>
+                </div>
+              </div>
+              <div class="chart-wrap">
+                <div class="chart-title">Restart log</div>
+                <div class="design-restart-wrap">
+                  <ul id="designRestartList" class="design-diag-list">
+                    <li>No restart event.</li>
+                  </ul>
+                </div>
+              </div>
+              <div class="table-wrap">
+                <table id="designResultTable" aria-live="polite">
+                  <thead id="designResultHead"></thead>
+                  <tbody id="designResultBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+    </div>
+
+    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+    <script>
+      const tabButtons = document.querySelectorAll('.tab-btn');
+      const calculatorTab = document.getElementById('calculatorTab');
+      const designerTab = document.getElementById('designerTab');
+
+      const form = document.getElementById('ostir-form');
+      const statusEl = document.getElementById('status');
+      const summaryEl = document.getElementById('resultSummary');
+      const spinner = document.getElementById('spinner');
+      const runBtn = document.getElementById('runBtn');
+      const commandPanel = document.getElementById('commandPanel');
+      const commandText = document.getElementById('commandText');
+      const progressWrap = document.getElementById('progressWrap');
+      const topSummary = document.getElementById('topSummary');
+      const exprChart = document.getElementById('exprChart');
+      const chartPointInfo = document.getElementById('chartPointInfo');
+      const fileInputWrap = document.getElementById('fileInputWrap');
+      const seqInput = document.getElementById('sequenceText');
+      const fileInput = document.getElementById('sequenceFile');
+      const tableHead = document.getElementById('resultHead');
+      const tableBody = document.getElementById('resultBody');
+      const downloadLink = document.getElementById('downloadLink');
+
+      const designForm = document.getElementById('rbs-design-form');
+      const designStatus = document.getElementById('designStatus');
+      const designSummary = document.getElementById('designResultSummary');
+      const designSpinner = document.getElementById('designSpinner');
+      const designRunBtn = document.getElementById('designRunBtn');
+      const designProgressWrap = document.getElementById('designProgressWrap');
+      const designTableHead = document.getElementById('designResultHead');
+      const designTableBody = document.getElementById('designResultBody');
+      const designDownloadLink = document.getElementById('designDownloadLink');
+      const designTopSummary = document.getElementById('designTopSummary');
+      const designDiagnosticsSummary = document.getElementById('designDiagnosticsSummary');
+      const designTraceChart = document.getElementById('designTraceChart');
+      const designTraceInfo = document.getElementById('designTraceInfo');
+      const designMoveChart = document.getElementById('designMoveChart');
+      const designMoveInfo = document.getElementById('designMoveInfo');
+      const designRestartList = document.getElementById('designRestartList');
+
+      let lastRows = [];
+
+      const modeRadios = document.querySelectorAll('input[name="inputMode"]');
+
+      function switchTab(tab) {
+        const target = tab === 'designer' ? 'designer' : 'calculator';
+        tabButtons.forEach((btn) => {
+          btn.classList.toggle('active', btn.dataset.tab === target);
+        });
+        calculatorTab.classList.toggle('active', target === 'calculator');
+        designerTab.classList.toggle('active', target === 'designer');
+      }
+
+      tabButtons.forEach((btn) => {
+        btn.addEventListener('click', () => {
+          switchTab(btn.dataset.tab);
+        });
+      });
+
+      function setMode(mode) {
+        if (mode === 'file') {
+          fileInputWrap.classList.remove('hidden');
+          seqInput.required = false;
+          fileInput.required = true;
+          fileInputWrap.style.display = 'block';
+        } else {
+          fileInputWrap.classList.remove('hidden');
+          fileInputWrap.style.display = 'none';
+          seqInput.required = true;
+          fileInput.required = false;
+          fileInput.value = '';
+        }
+      }
+
+      modeRadios.forEach((radio) => {
+        radio.addEventListener('change', (event) => {
+          setMode(event.target.value);
+        });
+      });
+
+      switchTab('calculator');
+      setMode('sequence');
+      clearDesignDiagnostics();
+
+      function toNum(value) {
+        const n = Number(value);
+        return Number.isFinite(n) ? n : null;
+      }
+
+      function percentile(values, ratio) {
+        if (!values.length) return null;
+        const sorted = [...values].sort((a, b) => a - b);
+        const idx = Math.floor((sorted.length - 1) * ratio);
+        return sorted[Math.max(0, Math.min(sorted.length - 1, idx))];
+      }
+
+      function formatFloat(value) {
+        if (value === null || value === undefined || Number.isNaN(value)) return '-';
+        return Number(value).toFixed(4).replace(/\.?0+$/, '');
+      }
+
+      function formatPercent(value) {
+        if (value === null || value === undefined || !Number.isFinite(Number(value))) return '-';
+        return `${(Number(value) * 100).toFixed(2)}%`;
+      }
+
+      function clearDesignDiagnostics() {
+        if (window.Plotly && typeof Plotly.purge === 'function') {
+          Plotly.purge(designTraceChart);
+          Plotly.purge(designMoveChart);
+        }
+        designTraceChart.innerHTML = '';
+        designMoveChart.innerHTML = '';
+        designTraceInfo.textContent = '온도/수락율/에러 로그가 기록되지 않았습니다.';
+        designMoveInfo.textContent = '변이 통계가 없습니다.';
+        designRestartList.innerHTML = '';
+        const restartItem = document.createElement('li');
+        restartItem.textContent = 'No restart event.';
+        designRestartList.appendChild(restartItem);
+        designDiagnosticsSummary.innerHTML = `
+          <div class="summary-card">
+            <div class="summary-label">Status</div>
+            <div class="summary-value">Ready</div>
+            <div class="summary-meta">Run design to collect diagnostics.</div>
+          </div>
+        `;
+      }
+
+      function renderDesignDiagnostics(diag) {
+        const diagnostics = diag || {};
+        const trace = Array.isArray(diagnostics.trace) ? diagnostics.trace : [];
+        const temperatureInfo = diagnostics.temperature || {};
+        const moveAttempts = diagnostics.move_type_attempts || {};
+        const moveAccepts = diagnostics.move_type_accepts || {};
+
+        const initTemp = toNum(temperatureInfo.init);
+        const minTemp = toNum(temperatureInfo.min);
+        const maxTemp = toNum(temperatureInfo.max);
+        const restartCount = Number.isFinite(Number(diagnostics.restart_count))
+          ? Number(diagnostics.restart_count)
+          : 0;
+        const acceptWindow = Number.isFinite(Number(diagnostics.accept_window))
+          ? Number(diagnostics.accept_window)
+          : null;
+        const bestError = diagnostics.best_error;
+        const bestIteration = diagnostics.best_iteration;
+
+        const iterations = trace.map((item) => toNum(item.iteration) ?? null);
+
+        const hasTraceData = trace.length > 0;
+        const hasMoveData = ['sub', 'ins', 'del'].some((key) => Number(moveAttempts[key] || 0) + Number(moveAccepts[key] || 0) > 0);
+
+        designDiagnosticsSummary.innerHTML = `
+          <div class="summary-card">
+            <div class="summary-label">Temperature</div>
+            <div class="summary-value">${formatFloat(initTemp)} / ${formatFloat(minTemp)} / ${formatFloat(maxTemp)}</div>
+            <div class="summary-label">min / init / max</div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-label">Restart</div>
+            <div class="summary-value">${restartCount}</div>
+            <div class="summary-meta">Window: ${acceptWindow !== null ? acceptWindow : '-'} / Iter: ${trace.length}</div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-label">Best error</div>
+            <div class="summary-value">${formatFloat(bestError)}</div>
+            <div class="summary-meta">log10 오차 | best iteration: ${bestIteration !== undefined ? bestIteration : '-'}</div>
+          </div>
+        `;
+
+        designRestartList.innerHTML = '';
+        const restartLines = Array.isArray(diagnostics.restart_log) ? diagnostics.restart_log : [];
+        if (!restartLines.length) {
+          const empty = document.createElement('li');
+          empty.textContent = 'No restart occurred.';
+          designRestartList.appendChild(empty);
+        } else {
+          restartLines.forEach((line) => {
+            const item = document.createElement('li');
+            item.textContent = String(line);
+            designRestartList.appendChild(item);
+          });
+        }
+
+        if (!window.Plotly || typeof Plotly.react !== 'function') {
+          designTraceInfo.textContent = 'Plotly를 사용할 수 없습니다.';
+          designMoveInfo.textContent = 'Plotly를 사용할 수 없습니다.';
+          if (hasTraceData || hasMoveData) {
+            if (hasTraceData) {
+              const last = trace[trace.length - 1] || {};
+              designTraceInfo.textContent = `iter=${last.iteration ?? '-'}, temp=${formatFloat(toNum(last.temperature))}, accept_ratio=${formatFloat(toNum(last.accept_ratio))}, current_error=${formatFloat(toNum(last.current_error))}`;
+            }
+            if (hasMoveData) {
+              designMoveInfo.textContent = `sub=${moveAttempts.sub || 0}/${moveAccepts.sub || 0}, ins=${moveAttempts.ins || 0}/${moveAccepts.ins || 0}, del=${moveAttempts.del || 0}/${moveAccepts.del || 0}`;
+            }
+          }
+          return;
+        }
+
+        if (hasTraceData) {
+          const tempTrace = {
+            x: iterations,
+            y: trace.map((item) => toNum(item.temperature)),
+            mode: 'lines+markers',
+            name: 'temperature',
+            yaxis: 'y',
+            line: { color: '#1d4ed8' },
+          };
+          const acceptTrace = {
+            x: iterations,
+            y: trace.map((item) => toNum(item.accept_ratio)),
+            mode: 'lines+markers',
+            name: 'accept_ratio',
+            yaxis: 'y2',
+            line: { color: '#0ea5e9' },
+          };
+          const energyTrace = {
+            x: iterations,
+            y: trace.map((item) => toNum(item.current_error)),
+            mode: 'lines',
+            name: 'current_error',
+            yaxis: 'y',
+            line: { color: '#7c3aed', dash: 'dash' },
+          };
+
+          Plotly.react(designTraceChart, [tempTrace, acceptTrace, energyTrace], {
+            margin: { l: 48, r: 20, t: 8, b: 36 },
+            xaxis: { title: 'iteration' },
+            yaxis: {
+              title: 'temperature / current_error',
+              side: 'left',
+              showgrid: true,
+            },
+            yaxis2: {
+              title: 'accept_ratio',
+              side: 'right',
+              overlaying: 'y',
+              range: [0, 1],
+            },
+            plot_bgcolor: '#fff',
+            paper_bgcolor: '#fff',
+            hovermode: 'x unified',
+          }, {
+            responsive: true,
+            displaylogo: false,
+            displayModeBar: false,
+          });
+          const last = trace[trace.length - 1] || {};
+          designTraceInfo.textContent = `iter=${last.iteration ?? '-'} | temp=${formatFloat(toNum(last.temperature))} | accept_ratio=${formatPercent(last.accept_ratio)} | current_error=${formatFloat(toNum(last.current_error))} | best=${formatFloat(toNum(last.best_error))}`;
+        } else {
+          designTraceChart.innerHTML = '';
+          designTraceInfo.textContent = '탐색 trace 데이터가 없습니다.';
+        }
+
+        const moveKeys = ['sub', 'ins', 'del', 'random', 'noop'];
+        if (hasMoveData) {
+          const bars = [
+            {
+              x: moveKeys,
+              y: moveKeys.map((key) => Number(moveAttempts[key] || 0)),
+              name: 'attempts',
+              type: 'bar',
+              marker: { color: '#93c5fd' },
+            },
+            {
+              x: moveKeys,
+              y: moveKeys.map((key) => Number(moveAccepts[key] || 0)),
+              name: 'accepted',
+              type: 'bar',
+              marker: { color: '#1d4ed8' },
+            },
+          ];
+          Plotly.react(designMoveChart, bars, {
+            margin: { l: 48, r: 20, t: 8, b: 36 },
+            xaxis: { title: 'move type' },
+            yaxis: { title: 'count' },
+            barmode: 'group',
+            plot_bgcolor: '#fff',
+            paper_bgcolor: '#fff',
+          }, {
+            responsive: true,
+            displaylogo: false,
+            displayModeBar: false,
+          });
+          designMoveInfo.textContent = moveKeys
+            .map((key) => `${key}: ${moveAttempts[key] || 0} / ${moveAccepts[key] || 0}`)
+            .join(' | ');
+        } else {
+          designMoveChart.innerHTML = '';
+          designMoveInfo.textContent = '변이 통계가 없습니다.';
+        }
+      }
+
+      function renderTopSummary(rows) {
+        const exprRows = rows
+          .map((row) => ({ row, expr: toNum(row.expression) }))
+          .filter((item) => item.expr !== null)
+          .sort((a, b) => b.expr - a.expr)
+          .slice(0, 3);
+
+        if (!exprRows.length) {
+          topSummary.innerHTML =
+            '<div class="summary-card"><div class="summary-label">Top expression</div><div class="summary-value">0</div><div class="summary-meta">결합부위가 없습니다.</div></div>';
+          return;
+        }
+
+        topSummary.innerHTML = exprRows
+          .map(
+            ({ row, expr }, idx) => `
+              <div class="summary-card">
+                <div class="summary-label">Top ${idx + 1}</div>
+                <div class="summary-value">${formatFloat(expr)}</div>
+                <div class="summary-meta">start=${toNum(row.start_position) ?? '-'} / dG_total=${formatFloat(toNum(row.dG_total))}</div>
+              </div>
+            `
+          )
+          .join('');
+      }
+
+      function renderDesignTopSummary(rows) {
+        const candidates = rows || [];
+        if (!candidates.length) {
+          designTopSummary.innerHTML = `
+            <div class="summary-card">
+              <div class="summary-label">Best candidate</div>
+              <div class="summary-value">Not found</div>
+              <div class="summary-meta">요건을 만족하는 후보가 없습니다.</div>
+            </div>
+          `;
+          return;
+        }
+
+        const best = candidates[0];
+        const topThree = candidates.slice(0, 3).map((row, idx) => {
+          return {
+            label: `Top ${idx + 1}`,
+            value: formatFloat(toNum(row.predicted_expression)),
+            meta: `RBS ${row.rbs_sequence || '-'} / error ${formatFloat(toNum(row.error))}`,
+          };
+        });
+
+        const header = {
+          label: 'Target',
+          value: formatFloat(toNum(best.target_expression)),
+          meta: `Start codon: ${best.start_codon || '-'}`,
+        };
+
+        designTopSummary.innerHTML = [
+          `
+            <div class="summary-card">
+              <div class="summary-label">${header.label}</div>
+              <div class="summary-value">${header.value}</div>
+              <div class="summary-meta">${header.meta}</div>
+            </div>
+          `,
+          ...topThree.map(
+            (item) => `
+              <div class="summary-card">
+                <div class="summary-label">${item.label}</div>
+                <div class="summary-value">${item.value}</div>
+                <div class="summary-meta">${item.meta}</div>
+              </div>
+            `
+          ),
+        ].join('');
+      }
+
+      function formatDesignSummaryValue(value) {
+        return value === undefined || value === null ? '' : String(value);
+      }
+
+      function renderDesignTable(columns, rows) {
+        const sourceColumns = (columns && columns.length
+          ? columns
+          : [
+              'rank',
+              'rbs_sequence',
+              'predicted_expression',
+              'error',
+              'fold_ratio',
+              'start_position',
+              'start_codon',
+              'full_sequence',
+            ]);
+        const hasFullSequence = sourceColumns.includes('full_sequence');
+        const candidateColumns = sourceColumns.filter((col) => col !== 'full_sequence');
+
+        designTableHead.innerHTML = '';
+        designTableBody.innerHTML = '';
+        designTableBody.dataset.expandedRow = '';
+
+        if (!rows || !rows.length) {
+          renderDesignTopSummary([]);
+          const emptyColspan = candidateColumns.length + (hasFullSequence ? 1 : 0);
+          designTableBody.innerHTML = `<tr><td colspan="${emptyColspan}">No candidate sequences found.</td></tr>`;
+          return;
+        }
+
+        renderDesignTopSummary(rows);
+
+        const theadRow = document.createElement('tr');
+        if (hasFullSequence) {
+          const toggleHeader = document.createElement('th');
+          toggleHeader.textContent = 'Sequence';
+          theadRow.appendChild(toggleHeader);
+        }
+        candidateColumns.forEach((col) => {
+          const th = document.createElement('th');
+          th.textContent = col;
+          theadRow.appendChild(th);
+        });
+        designTableHead.appendChild(theadRow);
+
+        let expandedDetailRow = null;
+        let expandedToggle = null;
+
+        rows.forEach((row) => {
+          const fullSeq = formatDesignSummaryValue(row.full_sequence).trim();
+          const hasSeq = fullSeq !== '';
+          const tr = document.createElement('tr');
+          tr.classList.add('design-row');
+          const rowRank = row.rank;
+          if (rowRank === 1 || rowRank === '1') {
+            tr.style.background = '#ecfdf5';
+          }
+
+          if (hasFullSequence) {
+            const seqTd = document.createElement('td');
+            seqTd.style.whiteSpace = 'nowrap';
+            if (hasSeq) {
+              const toggle = document.createElement('span');
+              toggle.className = 'design-toggle';
+              toggle.textContent = '전체서열';
+              seqTd.appendChild(toggle);
+            } else {
+              seqTd.textContent = '';
+            }
+            tr.appendChild(seqTd);
+          }
+
+          candidateColumns.forEach((col) => {
+            const td = document.createElement('td');
+            const value = row[col];
+            td.textContent = formatDesignSummaryValue(value);
+            tr.appendChild(td);
+          });
+          designTableBody.appendChild(tr);
+
+          let detailTr = null;
+          if (hasFullSequence) {
+            detailTr = document.createElement('tr');
+            detailTr.className = 'design-detail-row';
+            const detailTd = document.createElement('td');
+            detailTd.colSpan = candidateColumns.length + 1;
+            detailTd.className = 'design-detail-cell';
+
+            if (hasSeq) {
+              const label = document.createElement('span');
+              label.className = 'design-detail-seq-label';
+              label.textContent = 'full_sequence';
+              const seqBox = document.createElement('div');
+              seqBox.className = 'design-detail-seq';
+              seqBox.textContent = fullSeq;
+              detailTd.appendChild(label);
+              detailTd.appendChild(seqBox);
+            } else {
+              detailTd.textContent = 'No full sequence available.';
+            }
+
+            detailTr.appendChild(detailTd);
+            designTableBody.appendChild(detailTr);
+          }
+
+          if (hasFullSequence && hasSeq && detailTr) {
+            const toggle = tr.querySelector('.design-toggle');
+            tr.addEventListener('click', () => {
+              if (expandedDetailRow === detailTr) {
+                tr.classList.remove('design-row-expanded');
+                detailTr.classList.remove('active');
+                if (toggle) {
+                  toggle.textContent = '전체서열';
+                }
+                expandedDetailRow = null;
+                expandedToggle = null;
+                designTableBody.dataset.expandedRow = '';
+                return;
+              }
+
+              if (expandedDetailRow) {
+                expandedDetailRow.classList.remove('active');
+              }
+              if (expandedToggle) {
+                const prevText = expandedToggle.classList.contains('design-toggle')
+                  ? expandedToggle
+                  : expandedToggle.querySelector('.design-toggle');
+                if (prevText) {
+                  prevText.textContent = '전체서열';
+                }
+              }
+              if (expandedToggle) {
+                expandedToggle.closest('.design-row')?.classList.remove('design-row-expanded');
+              }
+
+              tr.classList.add('design-row-expanded');
+              detailTr.classList.add('active');
+              if (toggle) {
+                toggle.textContent = '접기';
+              }
+              expandedDetailRow = detailTr;
+              expandedToggle = toggle;
+              designTableBody.dataset.expandedRow = '';
+            });
+          }
+        });
+      }
+
+      function clearChartNoData(message = '표시할 데이터가 없습니다.') {
+        if (window.Plotly && typeof Plotly.purge === 'function') {
+          Plotly.purge(exprChart);
+        }
+        if (chartClickHandler) {
+          exprChart.removeListener('plotly_click', chartClickHandler);
+          chartClickHandler = null;
+        }
+        exprChart.innerHTML = '';
+        exprChart.style.position = 'relative';
+        const emptyBox = document.createElement('div');
+        emptyBox.className = 'chart-point-info';
+        emptyBox.style.marginTop = '0';
+        emptyBox.style.minHeight = '240px';
+        emptyBox.style.display = 'flex';
+        emptyBox.style.alignItems = 'center';
+        emptyBox.style.justifyContent = 'center';
+        emptyBox.style.color = '#5d6e88';
+        emptyBox.textContent = message;
+        exprChart.appendChild(emptyBox);
+        chartPointInfo.textContent = '막대를 클릭하면 해당 start_position의 상세 정보를 표시합니다.';
+      }
+
+      function formatCellValue(value) {
+        if (value === null || value === undefined) return '-';
+        return String(value);
+      }
+
+      function renderSelectedPointInfo(row) {
+        if (!row) {
+          chartPointInfo.textContent = '막대를 클릭하면 해당 start_position의 상세 정보를 표시합니다.';
+          return;
+        }
+
+        const startPos = formatCellValue(row.start_position);
+        const startCodon = formatCellValue(row.start_codon);
+        const contextStart = formatCellValue(row.context_start_position);
+        const contextEnd = formatCellValue(row.context_end_position);
+        const contextSeq = formatCellValue(row.sequence_context);
+        const dG = formatFloat(toNum(row.dG_total));
+        const expr = formatFloat(toNum(row.expression));
+        chartPointInfo.textContent = `선택 위치: ${startPos}\nstart_codon: ${startCodon}\nexpression: ${expr}\ndG_total: ${dG}\n문맥 위치: ${contextStart}-${contextEnd}\n문맥 서열: ${contextSeq}`;
+      }
+
+      function clearActiveRowHighlight() {
+        tableBody.querySelectorAll('tr').forEach((row) => {
+          row.classList.remove('expr-row-active');
+        });
+      }
+
+      function highlightTableRowByIndex(rowIndex) {
+        clearActiveRowHighlight();
+        const selector = `tr[data-row-index="${rowIndex}"]`;
+        const target = tableBody.querySelector(selector);
+        if (!target) return;
+        target.classList.add('expr-row-active');
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+
+      let chartClickHandler;
+      let chartPoints = [];
+      function renderExpressionChart(rows) {
+        if (!window.Plotly || typeof Plotly.newPlot !== 'function') {
+          clearChartNoData('Plotly 라이브러리를 불러오지 못했습니다.');
+          return;
+        }
+
+        if (!rows || !rows.length) {
+          clearChartNoData();
+          return;
+        }
+
+        chartPoints = rows
+          .map((row, index) => ({
+            x: toNum(row.start_position),
+            y: toNum(row.expression),
+            start_codon: row.start_codon,
+            dG_total: row.dG_total,
+            index,
+            row,
+          }))
+          .filter((point) => point.x !== null && point.y !== null)
+          .sort((a, b) => a.x - b.x);
+
+        if (!chartPoints.length) {
+          clearChartNoData('start_position 또는 expression 값이 없어 그래프를 그릴 수 없습니다.');
+          return;
+        }
+
+        chartPointInfo.textContent = '막대를 클릭하면 해당 start_position의 상세 정보를 표시합니다.';
+        clearActiveRowHighlight();
+        exprChart.innerHTML = '';
+
+        const x = chartPoints.map((point) => point.x);
+        const y = chartPoints.map((point) => point.y);
+        const customData = chartPoints.map((point) => [
+          formatCellValue(point.start_codon),
+          formatFloat(toNum(point.dG_total)),
+          point.x,
+          point.index,
+        ]);
+
+        const trace = {
+          x,
+          y,
+          type: 'bar',
+          marker: { color: '#1d4ed8' },
+          customdata: customData,
+          hovertemplate:
+            'start_position: %{x}<br>' +
+            'expression: %{y:.4f}<br>' +
+            'start_codon: %{customdata[0]}<br>' +
+            'dG_total: %{customdata[1]}<br>' +
+            '<extra></extra>',
+        };
+
+        const layout = {
+          margin: { l: 48, r: 16, t: 8, b: 40 },
+          xaxis: { title: 'start_position' },
+          yaxis: { title: 'expression' },
+          plot_bgcolor: '#fff',
+          paper_bgcolor: '#fff',
+          bargap: 0.1,
+          hovermode: 'closest',
+        };
+        const options = {
+          responsive: true,
+          displaylogo: false,
+          displayModeBar: false,
+        };
+
+        Plotly.react(exprChart, [trace], layout, options);
+
+        if (chartClickHandler) {
+          exprChart.removeListener('plotly_click', chartClickHandler);
+        }
+        chartClickHandler = (event) => {
+          const point = event?.points?.[0];
+          if (!point) return;
+          const selected = chartPoints[point.pointIndex];
+          if (!selected) return;
+          renderSelectedPointInfo(selected.row);
+          highlightTableRowByIndex(selected.index);
+        };
+
+        exprChart.on('plotly_click', chartClickHandler);
+      }
+
+      function renderTable(columns, rows) {
+        topSummary.innerHTML = '';
+        lastRows = rows || [];
+        tableBody.dataset.rows = JSON.stringify(lastRows);
+
+        tableHead.innerHTML = '';
+        tableBody.innerHTML = '';
+
+        if (!rows || !rows.length) {
+          renderTopSummary([]);
+          clearChartNoData();
+          tableBody.innerHTML = '<tr><td colspan="1">No binding sites identified.</td></tr>';
+          return;
+        }
+
+        if (!columns || !columns.length) {
+          renderTopSummary(rows);
+          clearChartNoData();
+          tableBody.innerHTML = '<tr><td colspan="1">No columns available.</td></tr>';
+          return;
+        }
+
+        const theadRow = document.createElement('tr');
+        columns.forEach((col) => {
+          const th = document.createElement('th');
+          th.textContent = col;
+          theadRow.appendChild(th);
+        });
+        tableHead.appendChild(theadRow);
+
+        const exprValues = rows.map((row) => toNum(row.expression)).filter((v) => v !== null);
+        const dgValues = rows.map((row) => toNum(row.dG_total)).filter((v) => v !== null);
+        const exprP90 = percentile(exprValues, 0.9);
+        const dgP20 = percentile(dgValues, 0.2);
+
+        rows.forEach((row, index) => {
+          const tr = document.createElement('tr');
+          tr.dataset.rowIndex = String(index);
+          const expr = toNum(row.expression);
+          const dg = toNum(row.dG_total);
+          if (expr !== null && exprP90 !== null && expr >= exprP90) {
+            tr.classList.add('expr-hot');
+          }
+          if (dg !== null && dgP20 !== null && dg <= dgP20) {
+            tr.classList.add('dg-stable');
+          }
+
+          columns.forEach((col) => {
+            const td = document.createElement('td');
+            const value = row[col];
+            td.textContent = value === undefined ? '' : String(value);
+            tr.appendChild(td);
+          });
+          tableBody.appendChild(tr);
+        });
+
+        renderTopSummary(rows);
+        renderExpressionChart(rows);
+      }
+
+      function toCSV(columns, rows) {
+        const headerColumns = (columns && columns.length ? columns : Object.keys(rows?.[0] || {}));
+        const header = headerColumns.join(',');
+        const body = rows.map((row) => {
+          return headerColumns
+            .map((col) => {
+              const value = row[col] === undefined ? '' : String(row[col]);
+              const escaped = `"${value.replaceAll('"', '""')}"`;
+              return escaped;
+            })
+            .join(',');
+        });
+        return [header, ...body].join('\n');
+      }
+
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const formData = new FormData(form);
+        const selectedMode = [...modeRadios].find((radio) => radio.checked)?.value || 'sequence';
+        formData.append('inputMode', selectedMode);
+
+        statusEl.textContent = 'Running OSTIR...';
+        progressWrap.style.display = 'block';
+        commandPanel.style.display = 'none';
+        commandText.textContent = '';
+        statusEl.style.color = '#17315a';
+        runBtn.disabled = true;
+        spinner.style.opacity = '1';
+
+        try {
+          const response = await fetch('/run', {
+            method: 'POST',
+            body: formData,
+          });
+          const data = await response.json();
+
+          if (!response.ok || !data.ok) {
+            throw new Error(data.error || 'Run failed');
+          }
+
+          renderTable(data.columns, data.rows);
+          summaryEl.textContent = `${data.count} rows returned`;
+          summaryEl.style.color = '#17315a';
+          statusEl.textContent = '예측 완료';
+          if (data.command) {
+            commandText.textContent = data.command;
+            commandPanel.style.display = 'block';
+          }
+
+          const csv = toCSV(data.columns, data.rows);
+          const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+          const url = URL.createObjectURL(blob);
+          downloadLink.href = url;
+          downloadLink.download = 'ostir_results.csv';
+          downloadLink.classList.remove('hidden');
+        } catch (error) {
+          renderTable([], []);
+          summaryEl.textContent = 'No output yet';
+          summaryEl.style.color = '#17315a';
+          downloadLink.classList.add('hidden');
+          commandPanel.style.display = 'none';
+          commandText.textContent = '';
+          statusEl.textContent = `Error: ${error.message}`;
+          statusEl.style.color = '#a12525';
+        } finally {
+          progressWrap.style.display = 'none';
+          runBtn.disabled = false;
+          spinner.style.opacity = '0';
+        }
+      });
+
+      designForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const formData = new FormData(designForm);
+        clearDesignDiagnostics();
+
+        designStatus.textContent = 'Running RBS designer...';
+        designStatus.style.color = '#17315a';
+        designProgressWrap.style.display = 'block';
+        designRunBtn.disabled = true;
+        designSpinner.style.opacity = '1';
+        designSummary.textContent = 'Working...';
+
+        try {
+          const response = await fetch('/design', {
+            method: 'POST',
+            body: formData,
+          });
+          const data = await response.json();
+
+          if (!response.ok || !data.ok) {
+            throw new Error(data.error || 'Design failed');
+          }
+
+          renderDesignTable(data.columns, data.candidates);
+          renderDesignDiagnostics(data.diagnostics || {});
+          designSummary.textContent = `${data.count} candidates (iterations: ${data.iterations})`;
+          designSummary.style.color = '#17315a';
+          designStatus.textContent = '디자인 완료';
+
+          const csv = toCSV(data.columns, data.candidates);
+          const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+          const url = URL.createObjectURL(blob);
+          designDownloadLink.href = url;
+          designDownloadLink.download = 'rbs_design_results.csv';
+          designDownloadLink.classList.remove('hidden');
+        } catch (error) {
+          designSummary.textContent = 'No output yet';
+          designSummary.style.color = '#17315a';
+          designDownloadLink.classList.add('hidden');
+          designStatus.textContent = `Error: ${error.message}`;
+          designStatus.style.color = '#a12525';
+          renderDesignTable([], []);
+          clearDesignDiagnostics();
+        } finally {
+          designProgressWrap.style.display = 'none';
+          designRunBtn.disabled = false;
+          designSpinner.style.opacity = '0';
+          if (!designStatus.textContent.startsWith('Error')) {
+            designStatus.style.color = '#17315a';
+          }
+        }
+      });
+
+      window.addEventListener('resize', () => {
+        if (!lastRows || lastRows.length === 0) {
+          clearChartNoData();
+          return;
+        }
+        if (window.Plotly && typeof Plotly.Plots === 'object' && typeof Plotly.Plots.resize === 'function') {
+          Plotly.Plots.resize(exprChart);
+          Plotly.Plots.resize(designTraceChart);
+          Plotly.Plots.resize(designMoveChart);
+        } else {
+          renderExpressionChart(lastRows);
+        }
+      });
+    </script>
+  </body>
+</html>
