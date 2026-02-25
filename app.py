@@ -17,7 +17,7 @@ from flask import Flask, jsonify, render_template, request
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024  # 20 MB
 OSTIR_BIN = os.environ.get("OSTIR_BIN", "ostir")
-RBS_DESIGN_ITERATION_DEFAULT = int(os.environ.get("RBS_DESIGN_ITERATIONS", "40"))
+RBS_DESIGN_ITERATION_DEFAULT = int(os.environ.get("RBS_DESIGN_ITERATIONS", "500"))
 RBS_DESIGN_CANDIDATES_DEFAULT = int(os.environ.get("RBS_DESIGN_TOP_CANDIDATES", "10"))
 
 DEFAULT_ASD = "ACCTCCTTA"
