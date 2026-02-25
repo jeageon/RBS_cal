@@ -1701,7 +1701,8 @@
           const data = await response.json();
 
           if (!response.ok || !data.ok) {
-            throw new Error(data.error || 'Run failed');
+            const extra = data.detail ? ` (${data.detail})` : '';
+            throw new Error(`${data.error || 'Run failed'}${extra}`);
           }
 
           renderTable(data.columns, data.rows);
@@ -1755,7 +1756,8 @@
           const data = await response.json();
 
           if (!response.ok || !data.ok) {
-            throw new Error(data.error || 'Design failed');
+            const extra = data.detail ? ` (${data.detail})` : '';
+            throw new Error(`${data.error || 'Design failed'}${extra}`);
           }
 
           renderDesignTable(data.columns, data.candidates);

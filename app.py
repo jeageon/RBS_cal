@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import logging
 import io
 import os
 import sys
@@ -12,11 +13,13 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 import math
+import traceback
 
 from flask import Flask, jsonify, render_template, request
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024  # 20 MB
+app.logger.setLevel(logging.INFO)
 OSTIR_BIN = os.environ.get("OSTIR_BIN", "ostir")
 RBS_DESIGN_ITERATION_DEFAULT = int(os.environ.get("RBS_DESIGN_ITERATIONS", "500"))
 RBS_DESIGN_CANDIDATES_DEFAULT = int(os.environ.get("RBS_DESIGN_TOP_CANDIDATES", "10"))
@@ -40,6 +43,186 @@ DESIGN_ACCEPT_WINDOW = int(os.environ.get("RBS_DESIGN_ACCEPT_WINDOW", "20"))
 DESIGN_TEMPERATURE_INIT = float(os.environ.get("RBS_DESIGN_TEMPERATURE_INIT", "1.0"))
 DESIGN_TEMPERATURE_MIN = float(os.environ.get("RBS_DESIGN_TEMPERATURE_MIN", "1e-4"))
 DESIGN_TEMPERATURE_MAX = float(os.environ.get("RBS_DESIGN_TEMPERATURE_MAX", "8.0"))
+OSTIR_TIMEOUT_SECONDS = int(os.environ.get("OSTIR_TIMEOUT_SECONDS", "120"))
+OSTIR_MODULE_HINT_RNA = "No module named 'RNA'"
+VIENNARNA_PATH_HINT = "ViennaRNA is not properly installed or in PATH"
+VIENNARNA_MISSING_HINT = "RBS Calculator Vienna is missing dependency ViennaRNA"
+VIENNARNA_BINARIES = ("RNAfold", "RNAsubopt", "RNAeval")
+_VIENNARNA_READY: Optional[bool] = None
+
+
+def _error_payload(message: str, status: int = 500, detail: Optional[str] = None):
+    payload = {"ok": False, "error": message}
+    if detail:
+        payload["detail"] = detail
+    return payload, status
+
+
+def _normalize_command_names(names: Tuple[str, ...]) -> List[str]:
+    normalized: List[str] = []
+    seen = set()
+    for value in names:
+        if value not in seen:
+            normalized.append(value)
+            seen.add(value)
+    return normalized
+
+
+def _candidate_viennarna_dirs() -> List[Path]:
+    venv_dir = Path(__file__).resolve().parent
+    python_dir = Path(sys.executable).resolve().parent
+    python_root = python_dir.parent
+    base_prefix = Path(sys.base_prefix)
+    candidates: List[Path] = [
+        python_dir,
+        python_root,
+        python_root / "Scripts",
+        python_root / "bin",
+        base_prefix,
+        base_prefix / "Scripts",
+        base_prefix / "bin",
+        base_prefix / "Lib" / "site-packages",
+        base_prefix / "lib" / "site-packages",
+        venv_dir / ".venv" / "Lib" / "site-packages",
+        venv_dir / ".venv" / "Lib" / "site-packages" / "RNA" / "bin",
+    ]
+
+    if os.name == "nt":
+        candidates.extend(
+            [
+                Path(os.environ.get("APPDATA", "")) / "Python",
+                Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Python",
+                Path(os.environ.get("ProgramW6432", "")),
+                Path(os.environ.get("ProgramFiles", "")),
+                Path(os.environ.get("ProgramFiles(x86)", "")),
+            ]
+        )
+
+    try:
+        import RNA  # type: ignore
+
+        if RNA.__file__:
+            root = Path(RNA.__file__).resolve().parent
+            candidates.extend(
+                [
+                    root,
+                    root.parent,
+                    root / "bin",
+                    root.parent / "bin",
+                    root.parent / "Scripts",
+                ]
+            )
+    except Exception:
+        pass
+
+    uniq: List[Path] = []
+    seen = set()
+    for value in candidates:
+        try:
+            value_str = str(value)
+        except Exception:
+            continue
+        if not value_str:
+            continue
+        if value_str in seen:
+            continue
+        seen.add(value_str)
+        if value.exists():
+            uniq.append(value)
+    return uniq
+
+
+def _missing_viennarna_bins() -> List[str]:
+    missing: List[str] = []
+    for binary in _normalize_command_names(VIENNARNA_BINARIES):
+        if shutil.which(binary) is None:
+            missing.append(binary)
+    return missing
+
+
+def _has_vienna_module() -> bool:
+    try:
+        import RNA  # type: ignore
+    except Exception:
+        return False
+    return True
+
+
+def _ensure_viennarna_in_path() -> List[str]:
+    missing = _missing_viennarna_bins()
+    if not missing:
+        return []
+
+    current_parts = {
+        p.strip().strip('"')
+        for p in os.environ.get("PATH", "").split(os.pathsep)
+        if p.strip()
+    }
+    for base in _candidate_viennarna_dirs():
+        for candidate_dir in (base, base / "bin"):
+            if not candidate_dir.is_dir():
+                continue
+            candidate = str(candidate_dir)
+            if candidate in current_parts:
+                continue
+            os.environ["PATH"] = candidate + os.pathsep + os.environ.get("PATH", "")
+            current_parts.add(candidate)
+
+    missing = _missing_viennarna_bins()
+    return missing
+
+
+def _check_viennarna_dependencies() -> None:
+    global _VIENNARNA_READY
+    if _VIENNARNA_READY is True:
+        return
+
+    missing = _ensure_viennarna_in_path()
+    if not missing:
+        _VIENNARNA_READY = True
+        return
+
+    _VIENNARNA_READY = False
+    module_status = "ok" if _has_vienna_module() else "missing RNA module"
+    raise RuntimeError(
+        "ViennaRNA command dependencies are missing in PATH. "
+        f"Missing: {', '.join(missing)}. "
+        "Expected: RNAfold, RNAsubopt, RNAeval. "
+        f"Python RNA module status: {module_status}. "
+        "Install/add ViennaRNA bin directory to PATH (for example within this venv/site-packages/RNA/bin)."
+    )
+
+
+def _humanize_ostir_error(stderr: str, stdout: str, returncode: int) -> str:
+    text = "\n".join(part.strip() for part in [stderr, stdout] if part and part.strip())
+    if not text:
+        return f"OSTIR execution failed (exit={returncode})."
+
+    if OSTIR_MODULE_HINT_RNA in text:
+        return (
+            "OSTIR dependency missing: ViennaRNA Python module (RNA) not found. "
+            "Install in the same environment with: pip install ViennaRNA "
+            "and then restart this app."
+        )
+    if (
+        VIENNARNA_PATH_HINT in text
+        or VIENNARNA_MISSING_HINT in text
+        or "viennarn" in text.lower()
+    ):
+        locations = []
+        for binary in _normalize_command_names(VIENNARNA_BINARIES):
+            which = shutil.which(binary)
+            if which:
+                locations.append(f"{binary}: {which}")
+            else:
+                locations.append(f"{binary}: <missing>")
+        return (
+            "OSTIR runtime dependency issue: ViennaRNA command-line binaries are not ready in PATH. "
+            "Ensure RNAfold, RNAsubopt, RNAeval are installed and discoverable. "
+            + " ".join(locations)
+        )
+
+    return f"OSTIR failed (exit={returncode}): {text}"
 
 
 def _coerce_cell(value: str) -> Any:
@@ -232,51 +415,132 @@ def run_ostir_row_for_sequence(
     return rows
 
 
-def get_ostir_binary() -> str:
-    configured = (OSTIR_BIN or "").strip()
+def _iter_env_dirs() -> List[Path]:
+    directories: List[Path] = []
+    path_env = os.environ.get("PATH", "")
+    for item in path_env.split(os.pathsep):
+        item = item.strip()
+        if item:
+            directories.append(Path(item))
+    for env_key in ("CONDA_PREFIX", "CONDA_ROOT"):
+        root = os.environ.get(env_key)
+        if root:
+            directories.append(Path(root) / "Scripts")
+            directories.append(Path(root) / "bin")
+    return directories
+
+
+def _glob_candidate_paths(base: Path, pattern: str) -> List[Path]:
+    try:
+        return list(base.glob(pattern))
+    except OSError:
+        return []
+
+
+def _candidate_paths() -> List[str]:
+    configured = (OSTIR_BIN or "").strip().strip('"')
     if not configured:
         configured = "ostir"
 
     script_dir = Path(__file__).resolve().parent
     python_dir = Path(sys.executable).resolve().parent
-    platform_suffixes = ("",)
+
+    search_names = ["ostir", "ostir.py"]
     if os.name == "nt":
-        platform_suffixes = (".exe", "", ".bat", ".cmd")
-    candidate_names = []
-    if configured and configured != "ostir":
-        candidate_names.append(configured)
+        search_names.extend(
+            ["ostir.exe", "ostir.bat", "ostir.cmd", "ostir-script.py", "ostir-script.pyw"]
+        )
+
+    candidate_files: List[str] = []
+    if configured not in ("", "ostir"):
+        candidate_files.append(configured)
+
+    search_dirs = [
+        script_dir,
+        script_dir / ".venv" / "Scripts",
+        script_dir / ".venv" / "bin",
+        python_dir,
+        python_dir / "Scripts",
+        python_dir / "bin",
+    ]
+    if os.name == "nt":
+        search_dirs.extend([Path(os.environ.get("USERPROFILE", "")) / ".local" / "bin"])
     else:
-        candidate_names.append("ostir")
-        if os.name == "nt":
-            candidate_names.append("ostir.exe")
+        search_dirs.extend([Path.home() / ".local" / "bin"])
 
-    candidate_paths = [p for p in candidate_names]
-    for base in (script_dir, script_dir / ".venv" / "Scripts", script_dir / "venv" / "bin", python_dir):
-        for name in candidate_names:
-            path = base / name
-            if not path.suffix and os.name == "nt":
-                for suffix in platform_suffixes:
-                    candidate_paths.append(str(path.with_suffix(suffix)))
-            candidate_paths.append(str(path))
-    for suffix in platform_suffixes:
-        if configured.lower().endswith(suffix):
-            candidate_paths.append(configured)
-            break
+    conda_prefix = os.environ.get("CONDA_PREFIX")
+    if conda_prefix:
+        search_dirs.append(Path(conda_prefix) / "Scripts")
+        search_dirs.append(Path(conda_prefix) / "bin")
 
-    for candidate in dict.fromkeys(candidate_paths):
-        if not candidate:
-            continue
-        if os.path.isabs(candidate):
-            candidate_path = Path(candidate)
-        else:
-            candidate_path = script_dir / candidate
-        if candidate_path.is_file():
-            return str(candidate_path)
+    for directory in search_dirs:
+        for name in search_names:
+            candidate_files.append(str(directory / name))
+
+    for name in search_names:
+        located = shutil.which(name)
+        if located:
+            candidate_files.append(located)
+
+    for directory in _iter_env_dirs():
+        for name in search_names:
+            candidate_files.append(str(directory / name))
+
+    if os.name == "nt":
+        for base in (
+            Path(os.environ.get("ProgramW6432", "")),
+            Path(os.environ.get("ProgramFiles", "")),
+            Path(os.environ.get("ProgramFiles(x86)", "")),
+            Path(os.environ.get("LOCALAPPDATA", "")) / "Programs",
+            Path(os.environ.get("APPDATA", "")) / "Python",
+        ):
+            if str(base) and base.exists():
+                candidate_files.extend(
+                    str(candidate)
+                    for candidate in _glob_candidate_paths(
+                        base, "Python*/Scripts/ostir*"
+                    )
+                )
+                for name in search_names:
+                    candidate_files.extend(
+                        str(candidate)
+                        for candidate in _glob_candidate_paths(
+                            base, "Python*/Scripts/" + name + ".*"
+                        )
+                    )
+
+    # dedupe preserving order
+    seen: set[str] = set()
+    ordered: List[str] = []
+    for value in candidate_files:
+        if value and value not in seen:
+            ordered.append(value)
+            seen.add(value)
+    return ordered
+
+
+def get_ostir_binary() -> str:
+    configured = (OSTIR_BIN or "").strip().strip('"')
+    if not configured:
+        configured = "ostir"
+
+    for candidate in _candidate_paths():
         located = shutil.which(candidate)
         if located:
-            return located
+            candidate_path = Path(located)
+            if candidate_path.is_file():
+                return str(candidate_path)
 
-    raise RuntimeError(f"OSTIR executable not found: {configured}")
+        candidate_path = Path(candidate).expanduser()
+        if candidate_path.is_file():
+            return str(candidate_path)
+
+    searched = ", ".join(_candidate_paths()[:20])
+    raise RuntimeError(
+        f"OSTIR executable not found: {configured}. "
+        "Add to PATH or set OSTIR_BIN to a full executable path. "
+        f"Searched: {searched}"
+    )
 
 
 def detect_input_type(path: Path) -> str:
@@ -301,16 +565,28 @@ def detect_input_type(path: Path) -> str:
 
 
 def run_ostir_command(cmd: List[str]) -> str:
-    result = subprocess.run(
-        cmd,
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
+    _check_viennarna_dependencies()
+    try:
+        result = subprocess.run(
+            cmd,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=OSTIR_TIMEOUT_SECONDS,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError(f"OSTIR executable not found: {cmd[0]}") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"OSTIR execution timed out after {OSTIR_TIMEOUT_SECONDS} seconds."
+        ) from exc
+    except OSError as exc:
+        raise RuntimeError(f"Failed to execute OSTIR command: {exc}") from exc
 
     if result.returncode != 0:
-        raise RuntimeError(result.stderr.strip() or "OSTIR execution failed")
+        stderr = (result.stderr or "").strip()
+        stdout = (result.stdout or "").strip()
+        raise RuntimeError(_humanize_ostir_error(stderr=stderr, stdout=stdout, returncode=result.returncode))
 
     return result.stdout.strip()
 
@@ -842,23 +1118,25 @@ def index():
 
 @app.route("/run", methods=["POST"])
 def run_estimate():
-    input_mode = request.form.get("inputMode", "sequence")
-    start = request.form.get("start", "").strip()
-    end = request.form.get("end", "").strip()
-    asd = request.form.get("antiSd", DEFAULT_ASD).strip()
-    threads = request.form.get("threads", "1").strip()
-    print_seq = bool(request.form.get("printSequence"))
-    print_asd = bool(request.form.get("printASD"))
-
     temporary_path: Optional[Path] = None
     sequence_for_context: Optional[str] = None
+    command_text = ""
     try:
-        ostir_binary = get_ostir_binary()
-    except RuntimeError as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 500
+        input_mode = request.form.get("inputMode", "sequence")
+        start = request.form.get("start", "").strip()
+        end = request.form.get("end", "").strip()
+        asd = request.form.get("antiSd", DEFAULT_ASD).strip()
+        threads = request.form.get("threads", "1").strip()
+        print_seq = bool(request.form.get("printSequence"))
+        print_asd = bool(request.form.get("printASD"))
 
-    cmd: List[str] = [ostir_binary]
-    try:
+        try:
+            ostir_binary = get_ostir_binary()
+        except RuntimeError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 500
+
+        cmd: List[str] = [ostir_binary]
+
         if input_mode == "sequence":
             sequence = request.form.get("sequenceText", "").strip().replace("\r", "")
             if not sequence:
@@ -909,6 +1187,7 @@ def run_estimate():
         if print_asd:
             cmd.append("-q")
 
+        command_text = " ".join(cmd)
         stdout = run_ostir_command(cmd)
         if not stdout:
             return jsonify({"ok": False, "error": "No output from ostir"}), 500
@@ -920,7 +1199,7 @@ def run_estimate():
                 return jsonify(
                     {
                         "ok": True,
-                        "command": " ".join(cmd),
+                        "command": command_text,
                         "count": 0,
                         "columns": [],
                         "rows": [],
@@ -936,12 +1215,26 @@ def run_estimate():
         return jsonify(
             {
                 "ok": True,
-                "command": " ".join(cmd),
+                "command": command_text,
                 "count": len(rows),
                 "columns": columns,
                 "rows": rows,
             }
         )
+    except RuntimeError as exc:
+        app.logger.warning("OSTIR runtime error in /run: %s", exc)
+        payload, status = _error_payload(
+            f"OSTIR runtime error: {exc}", detail=traceback.format_exc()[:1000]
+        )
+        return jsonify(payload), status
+    except Exception as exc:
+        app.logger.error("Unhandled error in /run: %s", exc)
+        app.logger.exception("Full traceback for /run")
+        payload, status = _error_payload(
+            "Internal server error in run endpoint",
+            detail=traceback.format_exc()[:1000],
+        )
+        return jsonify(payload), status
     finally:
         if temporary_path and temporary_path.exists():
             try:
@@ -1073,6 +1366,18 @@ def run_design():
         response["best"] = ranked[0] if ranked else None
 
     return jsonify(response)
+
+
+@app.errorhandler(Exception)
+def _handle_runtime_error(error):
+    if request.path in {"/run", "/design"}:
+        app.logger.exception("Unhandled exception in %s: %s", request.path, error)
+        payload, status = _error_payload(
+            "Internal server error in API endpoint",
+            detail=traceback.format_exc()[:1000],
+        )
+        return jsonify(payload), status
+    raise error
 
 
 if __name__ == "__main__":

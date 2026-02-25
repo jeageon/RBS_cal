@@ -10,6 +10,7 @@ RBS expression estimation and RBS design web UI powered by OSTIR.
 ## Recommended environment
 - Python 3.10+ (or newer)
 - `ostir` executable installed and accessible.
+- On Windows, `ostir` requires both the ViennaRNA Python module (`RNA`) and ViennaRNA CLI tools (`RNAfold`, `RNAsubopt`, `RNAeval`) in PATH.
 
 ## Quick start (macOS)
 ```bash
@@ -45,6 +46,24 @@ If OSTIR is not auto-discovered, set explicitly:
 set OSTIR_BIN=C:\path\to\ostir.exe
 RBS_cal-WebUI.bat
 ```
+
+If startup returns `ModuleNotFoundError: No module named 'RNA'`, install ViennaRNA in the launcher venv:
+```bat
+%VENV_DIR%\Scripts\python.exe -m pip install ViennaRNA
+```
+
+If startup succeeds but `OSTIR` still fails with `ViennaRNA is not properly installed or in PATH`, make sure one of the following is true:
+- `where RNAfold` returns a valid path.
+- `where RNAsubopt` returns a valid path.
+- `where RNAeval` returns a valid path.
+- If missing, add the ViennaRNA bin folder to the launcher environment PATH (the bat file now tries:
+  `<VENV_DIR>\\Lib\\site-packages\\RNA\\bin`).
+
+또한 배치파일 실행 시 아래 진단 로그를 같이 확인할 수 있습니다.
+- `[FOUND] RNAfold` / `[MISSING] RNAfold` 형식으로 각 바이너리 존재 여부 출력
+- 누락이 있으면 바로 실패 사유를 표시합니다.
+
+If installation fails, use the ViennaRNA install method that matches your Windows environment (binary/conda path) and run the launcher again.
 
 ## Project structure
 ```text
