@@ -9,25 +9,29 @@ set "HOST=127.0.0.1"
 set "PORT=8000"
 set "MAX_PORT=8010"
 set "PYTHON_EXE="
-set "PYTHON_ARGS="
 
 if exist "%LOG_FILE%" del "%LOG_FILE%" >nul 2>&1
 
-echo [RBS_cal] start
 call :log "== RBS_cal WebUI start =="
 call :log "Project directory: %PROJECT_DIR%"
 
+echo [RBS_cal] start
+
+echo %LOG_FILE%
+
 if not exist "%PROJECT_DIR%\app.py" (
-  call :log "ERROR: app.py not found"
-  echo app.py not found. Place the .bat beside app.py.
+  echo ERROR: app.py not found.
   goto fail
 )
 
-cd /d "%PROJECT_DIR%" || goto fail_cd
+cd /d "%PROJECT_DIR%"
+if errorlevel 1 (
+  echo ERROR: cannot change directory.
+  goto fail
+)
 
 if exist "%VENV_DIR%\Scripts\python.exe" (
   set "PYTHON_EXE=%VENV_DIR%\Scripts\python.exe"
-  call :log "Use venv python"
 ) else (
   where py >nul 2>nul
   if not errorlevel 1 (
@@ -36,8 +40,7 @@ if exist "%VENV_DIR%\Scripts\python.exe" (
   ) else (
     where python >nul 2>nul
     if errorlevel 1 (
-      call :log "ERROR: Python 3 not found"
-      echo Python 3 is not found on PATH.
+      echo ERROR: Python 3 not found.
       goto fail
     )
     set "PYTHON_EXE=python"
@@ -45,101 +48,70 @@ if exist "%VENV_DIR%\Scripts\python.exe" (
 )
 
 if not exist "%VENV_DIR%\Scripts\python.exe" (
-  call :log "Create virtual environment"
+  echo create venv.
   "%PYTHON_EXE%" %PYTHON_ARGS% -m venv "%VENV_DIR%"
-  if errorlevel 1 goto fail_venv
+  if errorlevel 1 goto fail
 )
 
 set "PYTHON_EXE=%VENV_DIR%\Scripts\python.exe"
-if not exist "%PYTHON_EXE%" goto fail_venv_bin
+if not exist "%PYTHON_EXE%" goto fail
 
-call :log "Install dependencies"
+echo install base libs...
 "%PYTHON_EXE%" -m pip install --upgrade pip setuptools wheel >>"%LOG_FILE%" 2>&1
-if errorlevel 1 goto fail_pip
+if errorlevel 1 goto fail
 "%PYTHON_EXE%" -m pip install -r "%PROJECT_DIR%\requirements.txt" >>"%LOG_FILE%" 2>&1
-if errorlevel 1 goto fail_requirements
+if errorlevel 1 goto fail
 
-call :log "Find OSTIR"
+call :log "Check OSTIR"
 if defined OSTIR_BIN if exist "%OSTIR_BIN%" (
-  call :log "OSTIR_BIN set: %OSTIR_BIN%"
+  echo OSTIR_BIN=%OSTIR_BIN%
 ) else (
   for /f "delims=" %%P in ('where ostir 2^>nul') do if not defined OSTIR_BIN set "OSTIR_BIN=%%~fP"
   if defined OSTIR_BIN (
-    call :log "OSTIR found: %OSTIR_BIN%"
+    echo OSTIR=%OSTIR_BIN%
   ) else (
-    call :log "WARNING: OSTIR not found. Server starts, prediction may fail."
+    echo WARNING: OSTIR not found.
   )
 )
 
-call :log "Find free port"
 set "PORT_SEARCH=%PORT%"
-:port_scan
-if %PORT_SEARCH% gtr %MAX_PORT% goto fail_port
+:find_port
+if %PORT_SEARCH% gtr %MAX_PORT% goto fail
 netstat -ano | findstr ":%PORT_SEARCH% " >nul 2>&1
 if not errorlevel 1 (
   set /a PORT_SEARCH=%PORT_SEARCH%+1
-  goto port_scan
+  goto find_port
 )
 set "PORT=%PORT_SEARCH%"
 set "URL=http://%HOST%:%PORT%"
 
-call :log "Start URL: %URL%"
-echo RBS_cal WebUI will run at: %URL%
-echo Logs: %LOG_FILE%
-echo.
+echo URL=%URL%
 
+echo Open browser...
 start "" "%URL%"
 
+echo Run app.py ...
 "%PYTHON_EXE%" "%PROJECT_DIR%\app.py" >>"%LOG_FILE%" 2>&1
-if errorlevel 1 goto fail_flask
+if errorlevel 1 goto fail
 
 goto done
 
-:fail_cd
-call :log "ERROR: cannot change directory"
-goto fail
-
-:fail_venv
-call :log "ERROR: failed to create virtual environment"
-goto fail
-
-:fail_venv_bin
-call :log "ERROR: venv python not found"
-goto fail
-
-:fail_pip
-call :log "ERROR: failed to upgrade pip"
-goto fail
-
-:fail_requirements
-call :log "ERROR: requirements install failed"
-goto fail
-
-:fail_port
-call :log "ERROR: no free port in range %PORT%-%MAX_PORT%"
-goto fail
-
-:fail_flask
-call :log "ERROR: Flask execution failed. check log: %LOG_FILE%"
-goto fail
-
 :fail
-type "%LOG_FILE%"
+if exist "%LOG_FILE%" type "%LOG_FILE%"
 echo.
-echo.
-echo [RBS_cal] 실행 실패. 위 로그를 확인하세요.
+echo FAILED. Keep this window open.
 pause
 exit /b 1
 
+goto :eof
+
 :done
 call :log "Server stopped"
+echo DONE.
 pause
 exit /b 0
 
 :log
 set "TS=%date% %time%"
-echo [%TS%] %~1
-if defined LOG_FILE (
-  echo [%TS%] %~1>>"%LOG_FILE%"
-)
-goto :eof
+echo [%TS%] %~1>>"%LOG_FILE%"
+exit /b 0
