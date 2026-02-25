@@ -118,32 +118,18 @@ set "PORT=%PORT%"
 set "HOST=%HOST%"
 echo [%date% %time%] Launching Flask on %URL% >> "%LOG_FILE%"
 
-start "" /B "%PYTHON_EXE%" "%PROJECT_DIR%\app.py" >> "%LOG_FILE%" 2>&1
+start "" /B powershell -NoProfile -Command "for($i=0; $i -lt 45; $i++){try {$c = New-Object System.Net.Sockets.TcpClient; $c.Connect('%HOST%',[int]'%PORT%'); $c.Close(); Start-Process '%URL%'; break } catch { Start-Sleep -Milliseconds 200 }}"
+
+"%PYTHON_EXE%" "%PROJECT_DIR%\app.py" >> "%LOG_FILE%" 2>&1
 if errorlevel 1 (
-  echo ERROR: Flask 실행 시작 실패
+  echo ERROR: Flask 실행 실패(자세한 로그: %LOG_FILE%)
   type "%LOG_FILE%"
   pause
   exit /b 1
 )
 
-set "READY="
-for /L %%I in (1,1,30) do (
-  powershell -NoProfile -Command "try { $c = New-Object System.Net.Sockets.TcpClient; $c.Connect('%HOST%',[int]'%PORT%'); $c.Close(); exit 0 } catch { exit 1 }" >nul 2>&1
-  if not errorlevel 1 (
-    set "READY=1"
-    goto :open_browser
-  )
-  timeout /t 1 >nul
-)
-
-:open_browser
-if defined READY (
-  echo [%date% %time%] Server ready: %URL% >> "%LOG_FILE%"
-) else (
-  echo [%date% %time%] Warning: server ready wait timed out. opening browser anyway. >> "%LOG_FILE%"
-)
-
-start "" "%URL%"
+echo [%date% %time%] Server ended. Check log: %LOG_FILE% >> "%LOG_FILE%"
+pause
 exit /b 0
 
 :find_free_port
