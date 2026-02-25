@@ -2,7 +2,7 @@
 setlocal EnableExtensions
 
 set "PROJECT_DIR=%~dp0"
-if "%PROJECT_DIR:~-1%"=="\\" set "PROJECT_DIR=%PROJECT_DIR:~0,-1%"
+if "%PROJECT_DIR:~-1%"=="\" set "PROJECT_DIR=%PROJECT_DIR:~0,-1%"
 
 set "LOG_FILE=%PROJECT_DIR%\.rbs_cal_web.log"
 set "VENV_DIR=%PROJECT_DIR%\.venv"
