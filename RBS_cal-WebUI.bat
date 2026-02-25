@@ -157,10 +157,11 @@ exit /b 1
 
 :check_vienna_runtime
 if not exist "%PYTHON_EXE%" exit /b 1
-set "VENN_DIR="
 set "VN_BASE=%VENV_DIR%"
 set "VIENNARNA_MISSING="
 
+echo.
+echo [ViennaRNA] checking Python module and command-line executables...
 where RNAfold 2>nul | findstr "." >nul
 if errorlevel 1 (
   "%PYTHON_EXE%" -c "import RNA" >nul 2>&1
@@ -174,29 +175,12 @@ if errorlevel 1 (
       exit /b 1
     )
   )
-
-  call :detect_vennabin "%VN_BASE%\Lib\site-packages\RNA\bin"
-  if not defined VENN_DIR call :detect_vennabin "%VN_BASE%\Lib\site-packages\RNA\Scripts"
-  if not defined VENN_DIR call :detect_vennabin "%VN_BASE%\Scripts"
-  if not defined VENN_DIR (
-    for /f "delims=" %%p in ('where RNAfold 2^>nul') do if not defined VENN_DIR set "VENN_DIR=%%~dp"
-  )
-  if defined VENN_DIR (
-    set "PATH=%VENN_DIR%;%PATH%"
-    echo Added ViennaRNA bin to PATH: %VENN_DIR%
-  ) else (
-    echo ERROR: ViennaRNA CLI tools not found in PATH after install.
-    echo Make sure RNAfold, RNAsubopt, RNAeval are available and run the installer again.
-    echo Checked directories:
-    echo   %%VENV_DIR%%\Lib\site-packages\RNA\bin
-    exit /b 1
-  )
 ) else (
   echo ViennaRNA CLI already on PATH.
 )
 
 for %%b in (RNAfold RNAsubopt RNAeval) do (
-  call :check_vienna_command %%b
+  call :ensure_vienna_command %%b
   if errorlevel 1 (
     set "VIENNARNA_MISSING=1"
   )
@@ -210,7 +194,7 @@ echo ViennaRNA dependency check passed.
 exit /b 0
 
 :detect_vennabin
-setlocal EnableDelayedExpansion
+setlocal EnableExtensions EnableDelayedExpansion
 set "base=%~1"
 if exist "%base%\RNAfold.exe" set "VENN_DIR=%base%"
 if exist "%base%\RNAfold" set "VENN_DIR=%base%"
@@ -220,6 +204,67 @@ if exist "%base%\RNAeval.exe" set "VENN_DIR=%base%"
 if exist "%base%\RNAeval" set "VENN_DIR=%base%"
 endlocal & set "VENN_DIR=%VENN_DIR%"
 exit /b 0
+
+:ensure_vienna_command
+set "cmd=%~1"
+call :check_vienna_command "%cmd%"
+if errorlevel 0 exit /b 0
+
+set "FOUND_DIR="
+if defined VN_BASE if not defined FOUND_DIR call :find_vienna_command_dir "%VN_BASE%\Scripts" "%cmd%"
+if defined VN_BASE if not defined FOUND_DIR call :find_vienna_command_dir "%VN_BASE%\Scripts\RNA" "%cmd%"
+if defined VN_BASE if not defined FOUND_DIR call :find_vienna_command_dir "%VN_BASE%\Lib\site-packages\RNA\bin" "%cmd%"
+if defined VN_BASE if not defined FOUND_DIR call :find_vienna_command_dir "%VN_BASE%\Lib\site-packages\RNA\Scripts" "%cmd%"
+if defined VN_BASE if not defined FOUND_DIR call :find_vienna_command_dir "%VN_BASE%\Lib\site-packages\RNA" "%cmd%"
+if defined VN_BASE if not defined FOUND_DIR call :find_vienna_command_dir "%VN_BASE%\Lib\site-packages" "%cmd%"
+if defined VN_BASE if not defined FOUND_DIR call :find_vienna_command_dir "%VN_BASE%\bin" "%cmd%"
+if defined CONDA_PREFIX if not defined FOUND_DIR call :find_vienna_command_dir "%CONDA_PREFIX%\Library\bin" "%cmd%"
+if defined CONDA_PREFIX if not defined FOUND_DIR call :find_vienna_command_dir "%CONDA_PREFIX%\Scripts" "%cmd%"
+if defined FOUND_DIR (
+  set "PATH=%FOUND_DIR%;%PATH%"
+  echo Added fallback ViennaRNA directory for %cmd%: %FOUND_DIR%
+  call :check_vienna_command "%cmd%"
+  exit /b %errorlevel%
+)
+echo [MISSING] %cmd% (not found in fallback scan)
+echo Tried locating in:
+if defined VN_BASE echo   %VN_BASE%\Scripts
+if defined VN_BASE echo   %VN_BASE%\Scripts\RNA
+if defined VN_BASE echo   %VN_BASE%\Lib\site-packages\RNA\bin
+if defined VN_BASE echo   %VN_BASE%\Lib\site-packages\RNA\Scripts
+if defined VN_BASE echo   %VN_BASE%\Lib\site-packages\RNA
+if defined VN_BASE echo   %VN_BASE%\Lib\site-packages
+if defined VN_BASE echo   %VN_BASE%\bin
+if defined CONDA_PREFIX echo   %CONDA_PREFIX%\Library\bin
+if defined CONDA_PREFIX echo   %CONDA_PREFIX%\Scripts
+exit /b 1
+
+:find_vienna_command_dir
+setlocal EnableExtensions EnableDelayedExpansion
+set "scan_root=%~1"
+set "cmd=%~2"
+set "found="
+if not exist "%scan_root%" (
+  endlocal & set "FOUND_DIR="
+  exit /b 1
+)
+
+for /f "delims=" %%p in ('dir /b /s /a "%scan_root%\%cmd%.exe" 2^>nul') do (
+  set "found=%%~dpp"
+  goto :scan_found
+)
+for /f "delims=" %%p in ('dir /b /s /a "%scan_root%\%cmd%.bat" 2^>nul') do (
+  set "found=%%~dpp"
+  goto :scan_found
+)
+for /f "delims=" %%p in ('dir /b /s /a "%scan_root%\%cmd%.cmd" 2^>nul') do (
+  set "found=%%~dpp"
+  goto :scan_found
+)
+:scan_found
+endlocal & set "FOUND_DIR=%found%"
+if defined found exit /b 0
+exit /b 1
 
 :check_vienna_command
 where %1 2>nul | findstr "." >nul
