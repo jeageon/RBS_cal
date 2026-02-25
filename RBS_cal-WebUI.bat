@@ -114,6 +114,8 @@ if errorlevel 1 (
 )
 
 set "URL=http://%HOST%:%PORT%"
+set "PORT=%PORT%"
+set "HOST=%HOST%"
 echo [%date% %time%] Launching Flask on %URL% >> "%LOG_FILE%"
 
 start "" /B "%PYTHON_EXE%" "%PROJECT_DIR%\app.py" >> "%LOG_FILE%" 2>&1
