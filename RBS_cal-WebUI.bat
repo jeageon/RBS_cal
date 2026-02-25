@@ -66,6 +66,16 @@ call :log "Check OSTIR"
 if defined OSTIR_BIN if exist "%OSTIR_BIN%" (
   echo OSTIR_BIN=%OSTIR_BIN%
 ) else (
+  if exist "%VENV_DIR%\\Scripts\\ostir.exe" set "OSTIR_BIN=%VENV_DIR%\\Scripts\\ostir.exe"
+  if defined OSTIR_BIN echo OSTIR=%OSTIR_BIN%
+  if not defined OSTIR_BIN if exist "%VENV_DIR%\\Scripts\\ostir" set "OSTIR_BIN=%VENV_DIR%\\Scripts\\ostir"
+  if defined OSTIR_BIN echo OSTIR=%OSTIR_BIN%
+  if not defined OSTIR_BIN if defined ProgramW6432 if exist "%ProgramW6432%\\Python\\Python*\\Scripts\\ostir.exe" (
+    for /f "delims=" %%p in ('dir /b /s "%ProgramW6432%\\Python\\Python*\\Scripts\\ostir.exe" 2^>nul') do if not defined OSTIR_BIN set "OSTIR_BIN=%%~fp"
+  )
+  if not defined OSTIR_BIN if defined LOCALAPPDATA if exist "%LOCALAPPDATA%\\Programs\\Python\\Python*\\Scripts\\ostir.exe" (
+    for /f "delims=" %%p in ('dir /b /s "%LOCALAPPDATA%\\Programs\\Python\\Python*\\Scripts\\ostir.exe" 2^>nul') do if not defined OSTIR_BIN set "OSTIR_BIN=%%~fp"
+  )
   for /f "delims=" %%P in ('where ostir 2^>nul') do if not defined OSTIR_BIN set "OSTIR_BIN=%%~fP"
   if defined OSTIR_BIN (
     echo OSTIR=%OSTIR_BIN%

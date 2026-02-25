@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import io
 import os
+import sys
 import random
 import re
 import shutil
@@ -232,16 +233,50 @@ def run_ostir_row_for_sequence(
 
 
 def get_ostir_binary() -> str:
-    if os.path.isabs(OSTIR_BIN):
-        if os.path.isfile(OSTIR_BIN) and os.access(OSTIR_BIN, os.X_OK):
-            return OSTIR_BIN
-        raise RuntimeError(f"Configured OSTIR_BIN is not executable: {OSTIR_BIN}")
+    configured = (OSTIR_BIN or "").strip()
+    if not configured:
+        configured = "ostir"
 
-    located = shutil.which(OSTIR_BIN)
-    if located:
-        return located
+    script_dir = Path(__file__).resolve().parent
+    python_dir = Path(sys.executable).resolve().parent
+    platform_suffixes = ("",)
+    if os.name == "nt":
+        platform_suffixes = (".exe", "", ".bat", ".cmd")
+    candidate_names = []
+    if configured and configured != "ostir":
+        candidate_names.append(configured)
+    else:
+        candidate_names.append("ostir")
+        if os.name == "nt":
+            candidate_names.append("ostir.exe")
 
-    raise RuntimeError(f"OSTIR executable not found: {OSTIR_BIN}")
+    candidate_paths = [p for p in candidate_names]
+    for base in (script_dir, script_dir / ".venv" / "Scripts", script_dir / "venv" / "bin", python_dir):
+        for name in candidate_names:
+            path = base / name
+            if not path.suffix and os.name == "nt":
+                for suffix in platform_suffixes:
+                    candidate_paths.append(str(path.with_suffix(suffix)))
+            candidate_paths.append(str(path))
+    for suffix in platform_suffixes:
+        if configured.lower().endswith(suffix):
+            candidate_paths.append(configured)
+            break
+
+    for candidate in dict.fromkeys(candidate_paths):
+        if not candidate:
+            continue
+        if os.path.isabs(candidate):
+            candidate_path = Path(candidate)
+        else:
+            candidate_path = script_dir / candidate
+        if candidate_path.is_file():
+            return str(candidate_path)
+        located = shutil.which(candidate)
+        if located:
+            return located
+
+    raise RuntimeError(f"OSTIR executable not found: {configured}")
 
 
 def detect_input_type(path: Path) -> str:
