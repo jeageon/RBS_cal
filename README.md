@@ -55,7 +55,6 @@ RBS_cal-WebUI.bat
 ├── requirements.txt
 ├── README.md
 ├── RBS_cal-WebUI.bat
-└── RBS_cal-WebUI.command
 ```
 
 ## Notes
