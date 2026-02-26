@@ -1416,6 +1416,12 @@ def _handle_runtime_error(error):
 
 
 if __name__ == "__main__":
+    try:
+        _check_viennarna_dependencies()
+    except RuntimeError as exc:
+        print(f"Startup dependency check failed: {exc}", file=sys.stderr, flush=True)
+        raise
+
     app.run(
         host=os.environ.get("HOST", "127.0.0.1"),
         port=int(os.environ.get("PORT", "8000")),

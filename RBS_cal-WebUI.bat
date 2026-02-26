@@ -106,7 +106,7 @@ set "URL=http://%HOST%:%PORT%"
 echo URL=%URL%
 
 echo Starting Flask app...
-start "" /B "%PYTHON_EXE%" "%PROJECT_DIR%\app.py" >>"%LOG_FILE%" 2>&1
+start "" /B cmd /c ""%PYTHON_EXE%" "%PROJECT_DIR%\app.py" >> "%LOG_FILE%" 2>&1"
 if not "%errorlevel%"=="0" goto :fail
 call :wait_for_server
 if not "%errorlevel%"=="0" goto :fail
@@ -158,6 +158,13 @@ if %WAIT_ATTEMPT% gtr %SERVER_READY_TIMEOUT% (
   exit /b 1
 )
 if exist "%LOG_FILE%" (
+  findstr /C:"Startup dependency check failed" "%LOG_FILE%" >nul 2>&1
+  if "%errorlevel%"=="0" (
+    echo ERROR: Flask exited on startup due dependency check failure.
+    echo.
+    type "%LOG_FILE%"
+    exit /b 1
+  )
   findstr /C:"Running on http://%HOST%:%PORT%" "%LOG_FILE%" >nul 2>&1
   if not errorlevel 1 exit /b 0
 )
