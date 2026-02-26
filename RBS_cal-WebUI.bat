@@ -11,7 +11,7 @@ set "HOST=127.0.0.1"
 set "PORT=8000"
 set "MAX_PORT=8010"
 set "SERVER_READY_TIMEOUT=60"
-set "RBS_VERSION=1.1.03"
+set "RBS_VERSION=1.1.04"
 set "PYTHON_EXE="
 set "PYTHON_ARGS="
 set "OSTIR_BIN="
@@ -78,6 +78,7 @@ if not errorlevel 1 (
 )
 set "PORT=%PORT_SEARCH%"
 set "URL=http://%HOST%:%PORT%"
+set "HEALTH_URL=%URL%/health"
 
 echo URL=%URL%
 
@@ -148,6 +149,9 @@ if exist "%LOG_FILE%" (
   findstr /C:"Running on http://%HOST%:%PORT%" "%LOG_FILE%" >nul 2>&1
   if not errorlevel 1 exit /b 0
 )
+
+"%PYTHON_EXE%" -c "import urllib.request,sys; urllib.request.urlopen(sys.argv[1], timeout=1).read(1)" "%HEALTH_URL%" >nul 2>&1
+if "%errorlevel%"=="0" exit /b 0
 ping -n 2 127.0.0.1 >nul
 goto wait_for_server_loop
 
@@ -383,50 +387,71 @@ echo.
 exit /b 0
 
 :open_webui_browser
+setlocal EnableExtensions EnableDelayedExpansion
 set "OPEN_URL=%~1"
-if not defined OPEN_URL exit /b 1
+if not defined OPEN_URL (
+  endlocal
+  exit /b 1
+)
 
 echo [Browser] trying to open: %OPEN_URL%
 
-if exist "%WINDIR%\System32\rundll32.exe" (
-  "%WINDIR%\System32\rundll32.exe" url.dll,FileProtocolHandler "%OPEN_URL%" >nul 2>&1
+if exist "%PYTHON_EXE%" (
+  "%PYTHON_EXE%" -c "import sys,webbrowser; sys.exit(0 if webbrowser.open(sys.argv[1], new=2) else 1)" "%OPEN_URL%" >nul 2>&1
   if "%errorlevel%"=="0" (
-    echo [Browser] opened via rundll32 URL handler.
+    echo [Browser] opened via Python webbrowser.
+    endlocal
     exit /b 0
   )
 )
 
+if exist "%WINDIR%\System32\rundll32.exe" (
+  start "" "%WINDIR%\System32\rundll32.exe" url.dll,FileProtocolHandler "%OPEN_URL%" >nul 2>&1
+  if "%errorlevel%"=="0" (
+    echo [Browser] opened via rundll32 URL handler.
+    endlocal
+    exit /b 0
+  )
+)
+
+rem Modern fallback: direct command shell open
 where explorer 2>nul | findstr "." >nul
 if "%errorlevel%"=="0" (
-  explorer "%OPEN_URL%" >nul 2>&1
+  start "" explorer "%OPEN_URL%" >nul 2>&1
   if "%errorlevel%"=="0" (
     echo [Browser] opened via explorer.
+    endlocal
     exit /b 0
   )
 )
 
 where powershell 2>nul | findstr "." >nul
 if "%errorlevel%"=="0" (
-  powershell -NoProfile -Command "Start-Process '%OPEN_URL%'" >nul 2>&1
+  powershell -NoProfile -Command "Start-Process -FilePath '%OPEN_URL%'" >nul 2>&1
   if "%errorlevel%"=="0" (
     echo [Browser] opened via PowerShell.
+    endlocal
     exit /b 0
   )
 )
 
-if exist "%PYTHON_EXE%" (
-  "%PYTHON_EXE%" -c "import webbrowser,sys; webbrowser.open(sys.argv[1])" "%OPEN_URL%" >nul 2>&1
+if exist "%COMSPEC%" (
+  "%COMSPEC%" /c start "" "%OPEN_URL%" >nul 2>&1
   if "%errorlevel%"=="0" (
-    echo [Browser] opened via Python webbrowser.
+    echo [Browser] opened via COMSPEC start.
+    endlocal
     exit /b 0
   )
 )
 
-start "" "%OPEN_URL%"
+rem Final fallback: keep command simple and robust for localized shells
+start "" "%OPEN_URL%" >nul 2>&1
 if "%errorlevel%"=="0" (
   echo [Browser] opened via CMD start.
+  endlocal
   exit /b 0
 )
 
 echo [Browser] auto-open failed for: %OPEN_URL%
+endlocal
 exit /b 1

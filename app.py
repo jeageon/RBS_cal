@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import logging
 import io
+import inspect
 import os
 import sys
 import random
@@ -10,10 +11,15 @@ import re
 import shutil
 import subprocess
 import tempfile
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
-import math
+import json
+import threading
+import time
 import traceback
+import uuid
+from functools import lru_cache
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Tuple
+import math
 
 from flask import Flask, jsonify, render_template, request
 
@@ -21,11 +27,15 @@ app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024  # 20 MB
 app.logger.setLevel(logging.INFO)
 OSTIR_BIN = os.environ.get("OSTIR_BIN", "ostir")
+TASKS_TTL_SECONDS = int(os.environ.get("RBS_TASK_TTL_SECONDS", "3600"))
 RBS_DESIGN_ITERATION_DEFAULT = int(os.environ.get("RBS_DESIGN_ITERATIONS", "500"))
 RBS_DESIGN_CANDIDATES_DEFAULT = int(os.environ.get("RBS_DESIGN_TOP_CANDIDATES", "10"))
 RBS_DESIGN_PRESEQ_MAX_BP = int(os.environ.get("RBS_DESIGN_PRESEQ_MAX_BP", "50"))
 RBS_DESIGN_CDS_MAX_BP = int(os.environ.get("RBS_DESIGN_CDS_MAX_BP", "50"))
 RBS_DESIGN_FULL_REFINEMENT_MULTIPLIER = max(1, int(os.environ.get("RBS_DESIGN_FULL_REFINEMENT_MULTIPLIER", "2")))
+RBS_OSTIR_API_CACHE_SIZE = int(os.environ.get("RBS_OSTIR_API_CACHE_SIZE", "1024"))
+RBS_DEFAULT_ASYNC = os.environ.get("RBS_DEFAULT_ASYNC", "1") == "1"
+RBS_DEBUG_ERROR = os.environ.get("RBS_DEBUG_ERROR", "0") == "1"
 
 DEFAULT_ASD = "ACCTCCTTA"
 START_CODONS = ("ATG", "GTG", "TTG")
@@ -52,17 +62,340 @@ VIENNARNA_PATH_HINT = "ViennaRNA is not properly installed or in PATH"
 VIENNARNA_MISSING_HINT = "RBS Calculator Vienna is missing dependency ViennaRNA"
 VIENNARNA_BINARIES = ("RNAfold", "RNAsubopt", "RNAeval")
 _VIENNARNA_READY: Optional[bool] = None
+_OSTIR_RUN = None
+_BACKGROUND_TASKS: Dict[str, Dict[str, Any]] = {}
+_TASK_LOCK = threading.Lock()
+
+try:
+    from ostir import run_ostir as _OSTIR_RUN  # type: ignore
+except Exception:
+    try:
+        from ostir.ostir import run_ostir as _OSTIR_RUN  # type: ignore
+    except Exception:
+        _OSTIR_RUN = None
 
 
 def _error_payload(message: str, status: int = 500, detail: Optional[str] = None):
+    # Keep API responses production-safe: avoid leaking internals by default.
     payload = {"ok": False, "error": message}
-    if detail:
+    if RBS_DEBUG_ERROR and detail:
         payload["detail"] = detail
     return payload, status
 
 
+def _now_timestamp() -> float:
+    return time.time()
+
+
+def _normalize_task(task: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = dict(task)
+    normalized.pop("result", None)
+    normalized.pop("error_detail", None)
+    return normalized
+
+
+def _task_cleanup() -> None:
+    cutoff = _now_timestamp() - TASKS_TTL_SECONDS
+    with _TASK_LOCK:
+        remove = [
+            task_id
+            for task_id, task in _BACKGROUND_TASKS.items()
+            if task.get("updated_at", 0) < cutoff
+        ]
+        for task_id in remove:
+            _BACKGROUND_TASKS.pop(task_id, None)
+
+
+def _task_create(task_type: str) -> str:
+    task_id = uuid.uuid4().hex
+    now = _now_timestamp()
+    with _TASK_LOCK:
+        _BACKGROUND_TASKS[task_id] = {
+            "id": task_id,
+            "type": task_type,
+            "status": "queued",
+            "progress": 0.0,
+            "message": "Queued",
+            "result": None,
+            "error": None,
+            "error_detail": None,
+            "created_at": now,
+            "updated_at": now,
+        }
+    _task_cleanup()
+    return task_id
+
+
+def _task_update(task_id: str, **updates: Any) -> None:
+    with _TASK_LOCK:
+        current = _BACKGROUND_TASKS.get(task_id)
+        if current is None:
+            return
+        current.update(updates)
+        current["updated_at"] = _now_timestamp()
+
+
+def _task_finish(task_id: str, result: Optional[Dict[str, Any]], error: Optional[str], error_detail: Optional[str] = None) -> None:
+    _task_update(
+        task_id,
+        status="failed" if error else "completed",
+        progress=1.0,
+        message="Failed" if error else "Completed",
+        result=result,
+        error=error,
+        error_detail=error_detail,
+    )
+
+
+def _run_in_background(task_id: str, func: Callable[..., Dict[str, Any]], *args: Any, **kwargs: Any) -> None:
+    def _runner() -> None:
+        _task_update(task_id, status="running", message="Running")
+        try:
+            result = func(*args, **kwargs)
+            if not isinstance(result, dict):
+                result = {"ok": False, "error": "Invalid worker result format."}
+                _task_finish(task_id, result, "Invalid worker result format.")
+                return
+            _task_finish(task_id, result, None, None)
+        except Exception as exc:
+            app.logger.exception("Background task failed (id=%s)", task_id)
+            debug_detail: Optional[str] = traceback.format_exc()[:1000] if RBS_DEBUG_ERROR else None
+            error_text = str(exc) if RBS_DEBUG_ERROR else "Background task failed."
+            _task_finish(task_id, None, error_text, debug_detail)
+
+
+def _safe_ostir_result_to_text(result: Any) -> str:
+    if result is None:
+        return ""
+    if isinstance(result, (bytes, bytearray)):
+        try:
+            return bytes(result).decode("utf-8")
+        except Exception:
+            return ""
+    if isinstance(result, str):
+        return result
+
+    rows: List[Dict[str, Any]] = []
+    if isinstance(result, dict):
+        nested = result.get("rows")
+        if isinstance(nested, list):
+            rows.extend(_normalize_ostir_row(row) for row in nested)
+        elif any(k in result for k in ("start_position", "start_codon", "expression")):
+            rows.append(_normalize_ostir_row(result))
+        elif result:
+            for value in result.values():
+                if isinstance(value, list):
+                    for row in value:
+                        rows.append(_normalize_ostir_row(row))
+                    break
+    elif isinstance(result, (list, tuple, set)):
+        rows.extend(_normalize_ostir_row(row) for row in result)
+
+    if rows:
+        return _serialize_ostir_rows_to_csv(rows)
+    return ""
+
+
+def _build_ostir_api_kwargs(
+    signature: inspect.Signature,
+    sequence: str,
+    start: int,
+    end: int,
+    asd: str,
+    threads: int,
+    input_type: str,
+) -> Dict[str, Any]:
+    parameter_names = set(signature.parameters.keys())
+    kwargs: Dict[str, Any] = {}
+
+    input_candidates = ("seq", "sequence", "sequence_text", "input_sequence", "input", "seq_txt", "fasta", "path")
+    asd_candidates = ("aSD", "asd", "anti_sd", "anti_sd_sequence", "sd")
+    thread_candidates = ("threads", "n_threads", "n_jobs", "jobs", "njobs", "num_threads")
+    start_candidates = ("start", "start_position", "start_codon", "s")
+    end_candidates = ("end", "end_position", "e")
+    output_candidates = ("otype", "output_type", "type", "fmt", "format", "output", "out")
+
+    def pick(candidates: Tuple[str, ...]) -> Optional[str]:
+        for name in candidates:
+            if name in parameter_names:
+                return name
+        return None
+
+    input_key = pick(input_candidates)
+    if input_key is None and len(signature.parameters) == 0:
+        input_key = None
+    if input_key is not None:
+        kwargs[input_key] = sequence
+
+    asd_key = pick(asd_candidates)
+    if asd_key is not None and asd:
+        kwargs[asd_key] = asd
+
+    thread_key = pick(thread_candidates)
+    if thread_key is not None and threads > 0:
+        kwargs[thread_key] = max(1, threads)
+
+    if start > 0:
+        start_key = pick(start_candidates)
+        if start_key is not None:
+            kwargs[start_key] = start
+
+    if end > 0:
+        end_key = pick(end_candidates)
+        if end_key is not None:
+            kwargs[end_key] = end
+
+    if input_type:
+        output_key = pick(output_candidates)
+        if output_key is not None:
+            kwargs[output_key] = "string"
+
+    if ("otype" in parameter_names) and "otype" not in kwargs and input_type:
+        kwargs["otype"] = "string"
+
+    if ("format" in parameter_names) and "format" not in kwargs and input_type:
+        kwargs["format"] = "string"
+
+    if ("output" in parameter_names) and "output" not in kwargs:
+        kwargs["output"] = None
+
+    return kwargs
+
+
 def _shorten_list(values: List[str], max_items: int = 12) -> List[str]:
     return values[:max_items]
+
+
+def _serialize_ostir_rows_to_csv(rows: List[Dict[str, Any]]) -> str:
+    if not rows:
+        return ""
+    preferred = [
+        "start_codon",
+        "start_position",
+        "expression",
+        "RBS_distance_bp",
+        "dG_total",
+        "dG_rRNA:mRNA",
+        "dG_mRNA",
+        "dG_spacing",
+        "dG_standby",
+        "dG_start_codon",
+    ]
+    extra: List[str] = []
+    for key in rows[0].keys():
+        if key not in preferred and key not in extra:
+            extra.append(key)
+    fieldnames = [name for name in preferred if name in rows[0]] + extra
+    if not fieldnames:
+        return ""
+
+    csv_buffer = io.StringIO()
+    writer = csv.DictWriter(csv_buffer, fieldnames=fieldnames, extrasaction="ignore", lineterminator="\n")
+    writer.writeheader()
+    for row in rows:
+        row_values = {
+            key: "" if row.get(key) is None else row.get(key)
+            for key in fieldnames
+        }
+        writer.writerow(row_values)
+
+    return csv_buffer.getvalue().strip()
+
+
+def _normalize_ostir_row(row: Any) -> Dict[str, Any]:
+    if isinstance(row, dict):
+        return row
+    return {"expression": row}
+
+
+@lru_cache(maxsize=RBS_OSTIR_API_CACHE_SIZE)
+def _run_ostir_api_cached(sequence: str, start: int, end: int, asd: str, threads: int, input_type: str) -> str:
+    if _OSTIR_RUN is None:
+        return ""
+
+    asd = asd or DEFAULT_ASD
+    thread_count = max(1, threads)
+    signature = inspect.signature(_OSTIR_RUN)
+    kwargs = _build_ostir_api_kwargs(signature, sequence, start, end, asd, thread_count, input_type)
+
+    # Try canonical keyword invocation.
+    last_error: Optional[Exception] = None
+    try:
+        api_results = _OSTIR_RUN(**kwargs)
+        text_result = _safe_ostir_result_to_text(api_results)
+        if text_result:
+            return text_result
+    except TypeError as exc:
+        last_error = exc
+
+    # Try positional fallback variants. Different OSTIR versions expose slightly
+    # different signatures, so we attempt a conservative set of call shapes.
+    input_types = ("string", "txt", "fasta", "csv")
+    canonical_output = input_type if input_type in input_types else "string"
+
+    positional_variants: List[Tuple[Tuple[Any, ...], Dict[str, Any]]] = [
+        ((sequence,), {}),
+        ((sequence,), {"threads": thread_count}),
+        ((sequence,), {"start": start, "end": end}),
+        ((sequence,), {"start": start, "end": end, "threads": thread_count}),
+    ]
+
+    named_variants: List[Dict[str, Any]] = [
+        {"sequence": sequence, "threads": thread_count, "start": start, "end": end, "output": canonical_output},
+        {"sequence": sequence, "threads": thread_count, "output": canonical_output},
+        {"seq": sequence, "threads": thread_count, "start": start, "end": end},
+        {"seq": sequence, "threads": thread_count},
+        {"input": sequence, "threads": thread_count, "start": start, "end": end},
+        {"path": sequence, "threads": thread_count, "start": start, "end": end},
+    ]
+    named_variants.append({"input_sequence": sequence, "threads": thread_count, "start": start, "end": end})
+
+    asd_names = ("aSD", "asd", "anti_sd", "anti_sd_sequence")
+    asd_keys = [name for name in asd_names if name in signature.parameters]
+    asd_name: Optional[str] = asd_keys[0] if asd_keys else None
+
+    if asd_name:
+        for variant in named_variants:
+            variant.setdefault(asd_name, asd)
+
+    for args, extra_kwargs in positional_variants:
+        try:
+            api_results = _OSTIR_RUN(*args, **{k: v for k, v in extra_kwargs.items() if v not in (None, "", 0)})
+            text_result = _safe_ostir_result_to_text(api_results)
+            if text_result:
+                return text_result
+        except Exception as exc:
+            last_error = exc
+
+    for variant in named_variants:
+        try:
+            candidate = dict(kwargs)
+            candidate.update({key: value for key, value in variant.items() if value not in (None, "", 0)})
+            if asd:
+                candidate.setdefault("aSD", asd)
+                candidate.setdefault("asd", asd)
+            candidate.setdefault("otype", canonical_output)
+            api_results = _OSTIR_RUN(**candidate)
+            text_result = _safe_ostir_result_to_text(api_results)
+            if text_result:
+                return text_result
+        except Exception as exc:
+            last_error = exc
+
+    # As a final fallback, pass only sequence as positional argument.
+    try:
+        api_results = _OSTIR_RUN(sequence)
+        text_result = _safe_ostir_result_to_text(api_results)
+        if text_result:
+            return text_result
+    except Exception as exc:
+        last_error = exc
+
+    if last_error is not None:
+        raise RuntimeError(f"OSTIR Python API execution failed: {last_error}") from last_error
+    raise RuntimeError("OSTIR Python API execution failed: empty output returned.")
+
+    return ""
 
 
 def _path_prefix_values(path_value: str, max_items: int = 12) -> List[str]:
@@ -396,6 +729,10 @@ def _coerce_float(value: Any) -> Optional[float]:
         return None
 
 
+def _coerce_bool(raw: Optional[str]) -> bool:
+    return str(raw or "").strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
 def parse_csv_output(raw: str) -> Tuple[List[str], List[Dict[str, Any]]]:
     sio = io.StringIO(raw)
     # Skip blank lines so DictReader gets a valid header.
@@ -478,6 +815,88 @@ def parse_ostir_output(raw: str) -> Tuple[List[str], List[Dict[str, Any]]]:
 
 def normalize_sequence(raw: str) -> str:
     return re.sub(r"[^ACGTUNRYSWKMBDHVNacgtunryswkmbdvh]", "", raw).upper()
+
+
+def _looks_like_sequence_text(value: str, min_length: int = 8) -> bool:
+    normalized = normalize_sequence(value)
+    if len(normalized) < min_length:
+        return False
+    return bool(re.fullmatch(r"[ACGTUNRYSWKMBDHVN]+", normalized))
+
+
+def extract_first_csv_sequence(path: Path) -> str:
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return ""
+
+    if not text.strip():
+        return ""
+
+    try:
+        sample = text[:4096]
+        dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
+    except Exception:
+        dialect = csv.excel
+
+    try:
+        reader = csv.DictReader(io.StringIO(text), dialect=dialect)
+    except Exception:
+        # Fallback: extract from raw token pattern.
+        matches = re.findall(r"[ACGTUNRYSWKMBDHVN]{8,}", text, flags=re.IGNORECASE)
+        for match in matches:
+            candidate = normalize_sequence(match)
+            if _looks_like_sequence_text(candidate, min_length=8):
+                return candidate
+        return ""
+
+    preferred = {
+        "sequence",
+        "seq",
+        "dna",
+        "nucleotide",
+        "nt",
+        "cds",
+        "cdssequence",
+        "codingsequence",
+    }
+
+    if not reader.fieldnames:
+        matches = re.findall(r"[ACGTUNRYSWKMBDHVN]{8,}", text, flags=re.IGNORECASE)
+        for match in matches:
+            candidate = normalize_sequence(match)
+            if _looks_like_sequence_text(candidate, min_length=8):
+                return candidate
+        return ""
+
+    for row in reader:
+        for key in reader.fieldnames:
+            raw_key = (key or "").strip()
+            if not raw_key:
+                continue
+            value = normalize_sequence(str(row.get(raw_key, "")))
+            if _looks_like_sequence_text(value, min_length=8):
+                return value
+
+            normalized_key = raw_key.lower().replace("-", "").replace("_", "")
+            if normalized_key in preferred and _looks_like_sequence_text(value, min_length=8):
+                return value
+
+        fallback_candidates: List[str] = []
+        for value in row.values():
+            normalized = normalize_sequence(str(value))
+            if _looks_like_sequence_text(normalized, min_length=8):
+                fallback_candidates.append(normalized)
+        if fallback_candidates:
+            return max(fallback_candidates, key=len)
+
+    # As a final fallback, scan entire file content.
+    matches = re.findall(r"[ACGTUNRYSWKMBDHVN]{8,}", text, flags=re.IGNORECASE)
+    for match in matches:
+        candidate = normalize_sequence(match)
+        if _looks_like_sequence_text(candidate, min_length=8):
+            return candidate
+    return ""
 
 
 def extract_first_fasta_sequence(path: Path) -> str:
@@ -858,6 +1277,61 @@ def detect_input_type(path: Path) -> str:
 
 def run_ostir_command(cmd: List[str]) -> str:
     _check_viennarna_dependencies()
+
+    if _OSTIR_RUN is not None:
+        params: Dict[str, Any] = {"start": 0, "end": 0, "asd": "", "threads": 1, "otype": "string"}
+        path_or_seq = ""
+        i = 0
+        while i < len(cmd):
+            token = cmd[i]
+            if token == "-i" and i + 1 < len(cmd):
+                path_or_seq = cmd[i + 1]
+            elif token == "-s" and i + 1 < len(cmd):
+                try:
+                    params["start"] = int(cmd[i + 1])
+                except ValueError:
+                    params["start"] = 0
+            elif token == "-e" and i + 1 < len(cmd):
+                try:
+                    params["end"] = int(cmd[i + 1])
+                except ValueError:
+                    params["end"] = 0
+            elif token == "-a" and i + 1 < len(cmd):
+                params["asd"] = cmd[i + 1]
+            elif token == "-j" and i + 1 < len(cmd):
+                try:
+                    params["threads"] = int(cmd[i + 1])
+                except ValueError:
+                    params["threads"] = 1
+            elif token == "-t" and i + 1 < len(cmd):
+                params["otype"] = (cmd[i + 1] or "string").lower()
+                if params["otype"] in {"fasta", "csv"}:
+                    params["otype"] = params["otype"]
+            i += 1
+
+        if params.get("otype") != "string" and path_or_seq and os.path.isfile(path_or_seq):
+            extracted_seq = ""
+            if params["otype"] == "fasta":
+                extracted_seq = extract_first_fasta_sequence(Path(path_or_seq))
+            elif params["otype"] == "csv":
+                extracted_seq = extract_first_csv_sequence(Path(path_or_seq))
+
+            if extracted_seq:
+                path_or_seq = extracted_seq
+                params["otype"] = "string"
+
+        if params.get("otype") == "string" and path_or_seq:
+            cached = _run_ostir_api_cached(
+                path_or_seq,
+                params["start"],
+                params["end"],
+                params["asd"] or DEFAULT_ASD,
+                params["threads"],
+                params["otype"],
+            )
+            if cached:
+                return cached
+
     try:
         result = subprocess.run(
             cmd,
@@ -1025,6 +1499,7 @@ def design_rbs_candidates(
     iterations: int = 40,
     top_n: int = 10,
     random_seed: Optional[str] = None,
+    progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
 ) -> Tuple[List[Dict[str, Any]], Optional[Dict[str, Any]], Dict[str, Any]]:
     if iterations <= 0 or top_n <= 0:
         return [], None, {
@@ -1374,6 +1849,22 @@ def design_rbs_candidates(
                     "accepted": accepted,
                 }
                 diagnostics["trace"].append(trace)
+                if progress_callback:
+                    try:
+                        progress_callback({
+                            "status": "running",
+                            "phase": "search",
+                            "progress": iteration / max_iter if max_iter else 1.0,
+                            "iteration": iteration,
+                            "max_iteration": max_iter,
+                            "temperature": temperature,
+                            "accept_ratio": accept_ratio,
+                            "current_error": trace["current_error"],
+                            "best_error": trace["best_error"],
+                            "move": move_type,
+                        })
+                    except Exception:
+                        app.logger.debug("Progress callback failed.", exc_info=True)
                 print(
                     "[iter {iteration:>4}] temp={temperature:.6f} accept_ratio={accept_ratio:.3f} "
                     "energy={current_error:.6f} best={best_error:.6f} move={last_move} accepted={accepted}".format(
@@ -1403,9 +1894,337 @@ def design_rbs_candidates(
     return unique_candidates, best_candidate, diagnostics
 
 
+def _coerce_non_negative_int(value: Optional[str], default: int, field_name: str) -> int:
+    text = (value or "").strip()
+    if not text:
+        return default
+    try:
+        parsed = int(text)
+    except ValueError as exc:
+        raise ValueError(f"{field_name} must be an integer") from exc
+    return parsed
+
+
+def _parse_design_request(form_data: Dict[str, str]) -> Dict[str, Any]:
+    pre_seq = (form_data.get("preSequence", "") or "").strip().replace("\r", "")
+    post_seq = (form_data.get("postSequence", "") or "").strip().replace("\r", "")
+    target = (form_data.get("targetExpression", "") or "").strip()
+    asd = (form_data.get("antiSd", DEFAULT_ASD) or "").strip()
+    threads = (form_data.get("threads", "1") or "1").strip()
+    min_len = (form_data.get("rbsMinLength", "6") or "").strip()
+    max_len = (form_data.get("rbsMaxLength", "12") or "").strip()
+    iterations = (form_data.get("iterations", str(RBS_DESIGN_ITERATION_DEFAULT)) or "").strip()
+    top_n = (form_data.get("topCandidates", str(RBS_DESIGN_CANDIDATES_DEFAULT)) or "").strip()
+    random_seed = (form_data.get("randomSeed", DESIGN_RANDOM_SEED) or "").strip()
+
+    full_pre_seq = _format_sequence(pre_seq)
+    full_post_seq = _format_sequence(post_seq)
+    pre_seq, post_seq, truncation_warnings, truncation_info = _truncate_design_sequences(
+        full_pre_seq,
+        full_post_seq,
+    )
+
+    if not pre_seq:
+        raise ValueError("Pre-sequence input is required")
+    if len(post_seq) < 3:
+        raise ValueError("postSequence must include a start codon and CDS")
+    if post_seq[:3].upper() not in START_CODONS:
+        raise ValueError("postSequence must start with ATG, GTG, or TTG")
+
+    if not target:
+        raise ValueError("targetExpression must be a number")
+    try:
+        target_expression = float(target)
+    except ValueError as exc:
+        raise ValueError("targetExpression must be a number") from exc
+    if target_expression <= 0:
+        raise ValueError("targetExpression must be greater than 0")
+
+    min_len_i = _coerce_non_negative_int(min_len, 6, "rbsMinLength")
+    max_len_i = _coerce_non_negative_int(max_len, 12, "rbsMaxLength")
+    if min_len_i < 3 or max_len_i < min_len_i:
+        raise ValueError("Invalid RBS length range")
+
+    iterations_i = _coerce_non_negative_int(iterations, RBS_DESIGN_ITERATION_DEFAULT, "iterations")
+    top_n_i = _coerce_non_negative_int(top_n, RBS_DESIGN_CANDIDATES_DEFAULT, "topCandidates")
+    if iterations_i <= 0 or top_n_i <= 0:
+        raise ValueError("iterations and topCandidates must be positive")
+
+    try:
+        threads_count = int(threads)
+    except ValueError as exc:
+        raise ValueError("Threads must be an integer") from exc
+    if threads_count <= 0:
+        threads_count = 1
+
+    return {
+        "full_pre_seq": full_pre_seq,
+        "full_post_seq": full_post_seq,
+        "pre_seq": pre_seq,
+        "post_seq": post_seq,
+        "truncation_warnings": truncation_warnings,
+        "truncation_info": truncation_info,
+        "target_expression": target_expression,
+        "asd": asd or DEFAULT_ASD,
+        "threads_count": threads_count,
+        "min_len_i": min_len_i,
+        "max_len_i": max_len_i,
+        "iterations_i": iterations_i,
+        "top_n_i": top_n_i,
+        "random_seed": random_seed,
+    }
+
+
+def _run_design_core(payload: Dict[str, Any], task_id: Optional[str] = None) -> Dict[str, Any]:
+    pre_seq = str(payload["pre_seq"])
+    post_seq = str(payload["post_seq"])
+    full_pre_seq = str(payload["full_pre_seq"])
+    full_post_seq = str(payload["full_post_seq"])
+    truncation_warnings = payload["truncation_warnings"]
+    truncation_info = payload["truncation_info"]
+    target_expression = float(payload["target_expression"])
+    asd = str(payload["asd"])
+    threads_count = int(payload["threads_count"])
+    min_len_i = int(payload["min_len_i"])
+    max_len_i = int(payload["max_len_i"])
+    iterations_i = int(payload["iterations_i"])
+    top_n_i = int(payload["top_n_i"])
+    random_seed = str(payload.get("random_seed", DESIGN_RANDOM_SEED))
+
+    total_iterations = max(1, iterations_i)
+
+    def _progress(progress_data: Dict[str, Any]) -> None:
+        if task_id:
+            progress = float(progress_data.get("progress", 0.0))
+            status_msg = progress_data.get("status", "running")
+            _task_update(
+                task_id,
+                progress=min(1.0, max(0.0, 0.65 * progress)),
+                message=f"{status_msg} (phase={progress_data.get('phase', 'search')}, iter={progress_data.get('iteration', 0)}/{progress_data.get('max_iteration', total_iterations)})",
+            )
+
+    try:
+        ostir_binary = get_ostir_binary()
+    except RuntimeError as exc:
+        raise
+
+    candidates, _, design_diagnostics = design_rbs_candidates(
+        pre_seq=pre_seq,
+        post_seq=post_seq,
+        target_expression=target_expression,
+        ostir_binary=ostir_binary,
+        asd=asd,
+        threads=threads_count,
+        min_length=min_len_i,
+        max_length=max_len_i,
+        iterations=iterations_i,
+        top_n=top_n_i,
+        random_seed=random_seed,
+        progress_callback=_progress if task_id else None,
+    )
+
+    target_log = math.log10(target_expression)
+    do_full_refinement = (
+        truncation_info["pre"]["truncated"] or truncation_info["cds"]["truncated"]
+    )
+    refinement_multiplier = max(1, RBS_DESIGN_FULL_REFINEMENT_MULTIPLIER)
+    refinement_limit = min(len(candidates), top_n_i * refinement_multiplier)
+    if do_full_refinement:
+        if task_id:
+            _task_update(task_id, progress=0.65, message="Running full-length reevaluation")
+
+    if do_full_refinement:
+        refinement_summary = {
+            "requested": refinement_limit,
+            "requested_top_n": top_n_i,
+            "multiplier": refinement_multiplier,
+            "attempted": 0,
+            "accepted": 0,
+            "rejected": 0,
+        }
+
+        refined_candidates: List[Dict[str, Any]] = []
+        start_codon_expected = full_post_seq[:3].upper() if full_post_seq else post_seq[:3].upper()
+
+        for index, candidate in enumerate(candidates[:refinement_limit], start=1):
+            if not candidate:
+                continue
+            rbs_seq = candidate.get("rbs_sequence", "")
+            if not rbs_seq:
+                continue
+
+            refinement_summary["attempted"] += 1
+            evaluated = _evaluate_design_candidate_full_sequence(
+                pre_seq=full_pre_seq,
+                post_seq=full_post_seq,
+                rbs_seq=rbs_seq,
+                target_log=target_log,
+                ostir_binary=ostir_binary,
+                asd=asd,
+                threads=threads_count,
+                start_codon=start_codon_expected,
+            )
+            if evaluated is None:
+                continue
+
+            if evaluated.get("rejected"):
+                refinement_summary["rejected"] += 1
+                continue
+
+            refinement_summary["accepted"] += 1
+            refined_candidates.append(evaluated)
+
+            if task_id and refinement_limit:
+                _task_update(
+                    task_id,
+                    progress=0.65 + 0.35 * (index / refinement_limit),
+                    message=f"Full-length reevaluation {index}/{refinement_limit}",
+                )
+
+        candidates = sorted(
+            refined_candidates,
+            key=lambda item: (item["error"], -item["predicted_expression"]),
+        )
+        design_diagnostics["refinement"] = refinement_summary
+    else:
+        design_diagnostics["refinement"] = {
+            "requested": top_n_i,
+            "attempted": 0,
+            "accepted": len(candidates),
+            "rejected": 0,
+        }
+
+    ranked = []
+    for index, candidate in enumerate(candidates, start=1):
+        if not candidate:
+            continue
+        predicted = _coerce_float(candidate.get("predicted_expression"))
+        err = _coerce_float(candidate.get("error"))
+        fold = None
+        if predicted is not None and predicted > 0 and target_expression > 0:
+            fold = predicted / target_expression
+        ranked.append(
+            {
+                "rank": index,
+                "rbs_sequence": candidate.get("rbs_sequence", ""),
+                "predicted_expression": predicted,
+                "target_expression": target_expression,
+                "error": err,
+                "fold_ratio": fold,
+                "start_position": candidate.get("start_position"),
+                "start_codon": candidate.get("start_codon"),
+                "full_sequence": candidate.get("full_sequence", ""),
+            }
+        )
+
+    return {
+        "columns": [
+            "rank",
+            "rbs_sequence",
+            "predicted_expression",
+            "error",
+            "fold_ratio",
+            "start_position",
+            "start_codon",
+            "full_sequence",
+        ],
+        "ok": True,
+        "target_expression": target_expression,
+        "iterations": iterations_i,
+        "pre_length_input": truncation_info.get("pre", {}).get("input_length", len(pre_seq)),
+        "cds_length_input": truncation_info.get("cds", {}).get("input_length", len(post_seq)),
+        "pre_length": len(pre_seq),
+        "cds_length": len(post_seq),
+        "full_length_pre": len(full_pre_seq),
+        "full_length_cds": len(full_post_seq),
+        "candidates": ranked,
+        "count": len(ranked),
+        "diagnostics": design_diagnostics,
+        "truncation": truncation_info,
+        "warnings": truncation_warnings,
+        "full_refinement": {
+            "enabled": do_full_refinement,
+            "full_pre_len": len(full_pre_seq),
+            "full_cds_len": len(full_post_seq),
+            "analysis_pre_len": len(pre_seq),
+            "analysis_cds_len": len(post_seq),
+            "requested_candidates": refinement_limit if do_full_refinement else top_n_i,
+            "refinement_multiplier": max(1, RBS_DESIGN_FULL_REFINEMENT_MULTIPLIER),
+        },
+        "best": ranked[0] if ranked else None,
+    }
+
+
+def _run_estimate_core(
+    cmd: List[str],
+    command_text: str,
+    sequence_for_context: Optional[str] = None,
+    temporary_path: Optional[Path] = None,
+    task_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    if task_id:
+        _task_update(task_id, status="running", progress=0.05, message="Running OSTIR")
+
+    try:
+        if task_id:
+            _task_update(task_id, progress=0.15, message="Executing OSTIR core")
+
+        stdout = run_ostir_command(cmd)
+        if not stdout:
+            raise RuntimeError("No output from ostir")
+
+        if task_id:
+            _task_update(task_id, progress=0.75, message="Parsing results")
+
+        columns, rows = parse_ostir_output(stdout)
+        if not columns:
+            normalized_output = stdout.lower()
+            if "no binding sites were identified" in normalized_output:
+                result = {
+                    "ok": True,
+                    "command": command_text,
+                    "count": 0,
+                    "columns": [],
+                    "rows": [],
+                }
+                if task_id:
+                    _task_update(task_id, progress=0.95, message="완료(바인딩 자리 없음)")
+                return result
+
+            raise RuntimeError("Failed to parse OSTIR output")
+
+        if sequence_for_context:
+            for row in rows:
+                start_position = row.get("start_position")
+                row.update(build_sequence_context(sequence_for_context, start_position))
+
+        result = {
+            "ok": True,
+            "command": command_text,
+            "count": len(rows),
+            "columns": columns,
+            "rows": rows,
+        }
+        if task_id:
+            _task_update(task_id, progress=1.0, message="Completed", status="completed")
+
+        return result
+    finally:
+        if temporary_path and temporary_path.exists():
+            try:
+                temporary_path.unlink()
+            except OSError:
+                app.logger.debug("Failed to remove temporary input file: %s", temporary_path)
+
+
 @app.route("/")
 def index():
     return render_template("index.html")
+
+
+@app.route("/health")
+def health():
+    return jsonify({"ok": True, "status": "ready"})
 
 
 @app.route("/run", methods=["POST"])
@@ -1413,6 +2232,7 @@ def run_estimate():
     temporary_path: Optional[Path] = None
     sequence_for_context: Optional[str] = None
     command_text = ""
+    cleanup_temporary = True
     try:
         input_mode = request.form.get("inputMode", "sequence")
         start = request.form.get("start", "").strip()
@@ -1422,6 +2242,7 @@ def run_estimate():
         print_seq = bool(request.form.get("printSequence"))
         print_asd = bool(request.form.get("printASD"))
 
+        prefer_async = _coerce_bool(request.form.get("async")) or _coerce_bool(request.form.get("asyncMode"))
         try:
             ostir_binary = get_ostir_binary()
         except RuntimeError as exc:
@@ -1479,278 +2300,123 @@ def run_estimate():
         if print_asd:
             cmd.append("-q")
 
+        if not prefer_async and RBS_DEFAULT_ASYNC:
+            input_length = 0
+            if sequence_for_context:
+                input_length = len(sequence_for_context)
+            elif temporary_path and temporary_path.exists():
+                try:
+                    input_length = temporary_path.stat().st_size
+                except OSError:
+                    input_length = 0
+            prefer_async = input_length > 5000
+
         command_text = " ".join(cmd)
-        stdout = run_ostir_command(cmd)
-        if not stdout:
-            return jsonify({"ok": False, "error": "No output from ostir"}), 500
+        if prefer_async:
+            task_id = _task_create("run")
+            if not task_id:
+                return jsonify({"ok": False, "error": "Failed to create task"}), 500
 
-        columns, rows = parse_ostir_output(stdout)
-        if not columns:
-            normalized_output = stdout.lower()
-            if "no binding sites were identified" in normalized_output:
-                return jsonify(
-                    {
-                        "ok": True,
-                        "command": command_text,
-                        "count": 0,
-                        "columns": [],
-                        "rows": [],
-                    }
-                )
-            return jsonify({"ok": False, "error": "Failed to parse OSTIR output", "raw": stdout}), 500
+            _run_in_background(
+                task_id,
+                _run_estimate_core,
+                cmd,
+                command_text,
+                sequence_for_context,
+                temporary_path,
+                task_id,
+            )
+            cleanup_temporary = False
+            return jsonify({"ok": True, "task_id": task_id, "status": "queued"}), 202
 
-        if sequence_for_context:
-            for row in rows:
-                start = row.get("start_position")
-                row.update(build_sequence_context(sequence_for_context, start))
-
-        return jsonify(
-            {
-                "ok": True,
-                "command": command_text,
-                "count": len(rows),
-                "columns": columns,
-                "rows": rows,
-            }
+        result = _run_estimate_core(
+            cmd=cmd,
+            command_text=command_text,
+            sequence_for_context=sequence_for_context,
+            temporary_path=temporary_path,
         )
+        return jsonify(result)
+
     except RuntimeError as exc:
         app.logger.warning("OSTIR runtime error in /run: %s", exc)
         payload, status = _error_payload(
-            f"OSTIR runtime error: {exc}", detail=traceback.format_exc()[:1000]
+            "OSTIR runtime error" if not RBS_DEBUG_ERROR else f"OSTIR runtime error: {exc}"
         )
         return jsonify(payload), status
     except Exception as exc:
         app.logger.error("Unhandled error in /run: %s", exc)
         app.logger.exception("Full traceback for /run")
-        payload, status = _error_payload(
-            "Internal server error in run endpoint",
-            detail=traceback.format_exc()[:1000],
-        )
+        payload, status = _error_payload("Internal server error in run endpoint")
         return jsonify(payload), status
     finally:
-        if temporary_path and temporary_path.exists():
+        if cleanup_temporary and temporary_path and temporary_path.exists():
             try:
                 temporary_path.unlink()
             except OSError:
-                pass
+                app.logger.debug("Failed to remove temporary input file: %s", temporary_path)
 
 
 @app.route("/design", methods=["POST"])
 def run_design():
-    pre_seq = request.form.get("preSequence", "").strip().replace("\r", "")
-    post_seq = request.form.get("postSequence", "").strip().replace("\r", "")
-    target = request.form.get("targetExpression", "").strip()
-    asd = request.form.get("antiSd", DEFAULT_ASD).strip()
-    threads = request.form.get("threads", "1").strip()
-    min_len = request.form.get("rbsMinLength", "6").strip()
-    max_len = request.form.get("rbsMaxLength", "12").strip()
-    iterations = request.form.get("iterations", str(RBS_DESIGN_ITERATION_DEFAULT)).strip()
-    top_n = request.form.get("topCandidates", str(RBS_DESIGN_CANDIDATES_DEFAULT)).strip()
-    random_seed = request.form.get("randomSeed", DESIGN_RANDOM_SEED).strip()
-
-    full_pre_seq = _format_sequence(pre_seq)
-    full_post_seq = _format_sequence(post_seq)
-    pre_seq, post_seq, truncation_warnings, truncation_info = _truncate_design_sequences(
-        full_pre_seq,
-        full_post_seq,
-    )
-    if not pre_seq:
-        return jsonify({"ok": False, "error": "Pre-sequence input is required"}), 400
-    if len(post_seq) < 3:
-        return jsonify({"ok": False, "error": "postSequence must include a start codon and CDS"}), 400
-    if post_seq[:3].upper() not in START_CODONS:
-        return jsonify({"ok": False, "error": "postSequence must start with ATG, GTG, or TTG"}), 400
+    use_async = _coerce_bool(request.form.get("async"))
+    async_mode_requested = _coerce_bool(request.form.get("asyncMode"))
+    prefer_async = use_async or async_mode_requested
 
     try:
-        target_expression = float(target)
-    except ValueError:
-        return jsonify({"ok": False, "error": "targetExpression must be a number"}), 400
-    if target_expression <= 0:
-        return jsonify({"ok": False, "error": "targetExpression must be greater than 0"}), 400
+        payload = _parse_design_request(dict(request.form))
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+    if prefer_async:
+        task_id = _task_create("design")
+        if task_id:
+            _run_in_background(task_id, _run_design_core, payload, task_id)
+            return jsonify({"ok": True, "task_id": task_id, "status": "queued"}), 202
 
     try:
-        min_len_i = int(min_len)
-        max_len_i = int(max_len)
-        if min_len_i < 3 or max_len_i < min_len_i:
-            return jsonify({"ok": False, "error": "Invalid RBS length range"}), 400
-    except ValueError:
-        return jsonify({"ok": False, "error": "rbsMinLength and rbsMaxLength must be integers"}), 400
-
-    try:
-        iterations_i = int(iterations)
-        top_n_i = int(top_n)
-        if iterations_i <= 0 or top_n_i <= 0:
-            return jsonify({"ok": False, "error": "iterations and topCandidates must be positive"}), 400
-    except ValueError:
-        return jsonify({"ok": False, "error": "iterations and topCandidates must be integers"}), 400
-
-    try:
-        threads_count = int(threads)
-        if threads_count <= 0:
-            threads_count = 1
-    except ValueError:
-        return jsonify({"ok": False, "error": "Threads must be an integer"}), 400
-
-    try:
-        ostir_binary = get_ostir_binary()
-    except RuntimeError as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 500
-
-    try:
-        candidates, _, design_diagnostics = design_rbs_candidates(
-            pre_seq=pre_seq,
-            post_seq=post_seq,
-            target_expression=target_expression,
-            ostir_binary=ostir_binary,
-            asd=asd,
-            threads=threads_count,
-            min_length=min_len_i,
-            max_length=max_len_i,
-            iterations=iterations_i,
-            top_n=top_n_i,
-            random_seed=random_seed,
-        )
+        payload_result = _run_design_core(payload)
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
     except RuntimeError as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 500
+        app.logger.warning("Runtime error in /design: %s", exc)
+        payload, status = _error_payload("Design runtime error")
+        return jsonify(payload), status
+    except Exception as exc:
+        app.logger.exception("Unhandled error in design flow")
+        payload, status = _error_payload("Internal server error in design endpoint")
+        return jsonify(payload), status
 
-    target_log = math.log10(target_expression)
-    do_full_refinement = (
-        truncation_info["pre"]["truncated"] or truncation_info["cds"]["truncated"]
-    )
-    if do_full_refinement:
-        refinement_multiplier = max(1, RBS_DESIGN_FULL_REFINEMENT_MULTIPLIER)
-        refinement_limit = min(
-            len(candidates), top_n_i * refinement_multiplier
-        )
-        refinement_summary = {
-            "requested": refinement_limit,
-            "requested_top_n": top_n_i,
-            "multiplier": refinement_multiplier,
-            "attempted": 0,
-            "accepted": 0,
-            "rejected": 0,
-        }
+    return jsonify(payload_result)
 
-        refined_candidates: List[Dict[str, Any]] = []
-        start_codon_expected = full_post_seq[:3].upper() if full_post_seq else post_seq[:3].upper()
 
-        for candidate in candidates[:refinement_limit]:
-            if not candidate:
-                continue
-            rbs_seq = candidate.get("rbs_sequence", "")
-            if not rbs_seq:
-                continue
+@app.route("/tasks/<task_id>", methods=["GET"])
+def get_task(task_id: str):
+    _task_cleanup()
+    with _TASK_LOCK:
+        task = _BACKGROUND_TASKS.get(task_id)
+        if task is None:
+            return jsonify({"ok": False, "error": "Task not found"}), 404
+        response = dict(task)
 
-            refinement_summary["attempted"] += 1
-            evaluated = _evaluate_design_candidate_full_sequence(
-                pre_seq=full_pre_seq,
-                post_seq=full_post_seq,
-                rbs_seq=rbs_seq,
-                target_log=target_log,
-                ostir_binary=ostir_binary,
-                asd=asd,
-                threads=threads_count,
-                start_codon=start_codon_expected,
-            )
-            if evaluated is None:
-                continue
+    public_task = _normalize_task(response)
+    public_task["ok"] = True
+    if public_task.get("status") in {"completed", "failed"}:
+        if response.get("status") == "completed":
+            public_task["result"] = response.get("result")
+        if response.get("status") == "failed":
+            if "error_detail" in response:
+                public_task["error_detail"] = (
+                    response["error_detail"] if RBS_DEBUG_ERROR else None
+                )
 
-            if evaluated.get("rejected"):
-                refinement_summary["rejected"] += 1
-                continue
-
-            refinement_summary["accepted"] += 1
-            refined_candidates.append(evaluated)
-
-        candidates = sorted(
-            refined_candidates,
-            key=lambda item: (item["error"], -item["predicted_expression"]),
-        )
-        design_diagnostics["refinement"] = refinement_summary
-    else:
-        design_diagnostics["refinement"] = {
-            "requested": top_n_i,
-            "attempted": 0,
-            "accepted": len(candidates),
-            "rejected": 0,
-        }
-
-    ranked = []
-    for index, candidate in enumerate(candidates, start=1):
-        if not candidate:
-            continue
-        predicted = _coerce_float(candidate.get("predicted_expression"))
-        err = _coerce_float(candidate.get("error"))
-        fold = None
-        if predicted is not None and predicted > 0 and target_expression > 0:
-            fold = predicted / target_expression
-        ranked.append(
-            {
-                "rank": index,
-                "rbs_sequence": candidate.get("rbs_sequence", ""),
-                "predicted_expression": predicted,
-                "target_expression": target_expression,
-                "error": err,
-                "fold_ratio": fold,
-                "start_position": candidate.get("start_position"),
-                "start_codon": candidate.get("start_codon"),
-                "full_sequence": candidate.get("full_sequence", ""),
-            }
-        )
-
-    response = {
-        "columns": [
-            "rank",
-            "rbs_sequence",
-            "predicted_expression",
-            "error",
-            "fold_ratio",
-            "start_position",
-            "start_codon",
-            "full_sequence",
-        ],
-        "ok": True,
-        "target_expression": target_expression,
-        "iterations": iterations_i,
-        "pre_length_input": truncation_info.get("pre", {}).get("input_length", len(pre_seq)),
-        "cds_length_input": truncation_info.get("cds", {}).get("input_length", len(post_seq)),
-        "pre_length": len(pre_seq),
-        "cds_length": len(post_seq),
-        "full_length_pre": len(full_pre_seq),
-        "full_length_cds": len(full_post_seq),
-        "candidates": ranked,
-        "count": len(ranked),
-        "diagnostics": design_diagnostics,
-        "truncation": truncation_info,
-        "warnings": truncation_warnings,
-        "full_refinement": {
-            "enabled": do_full_refinement,
-            "full_pre_len": len(full_pre_seq),
-            "full_cds_len": len(full_post_seq),
-            "analysis_pre_len": len(pre_seq),
-            "analysis_cds_len": len(post_seq),
-            "requested_candidates": refinement_limit
-            if do_full_refinement
-            else top_n_i,
-            "refinement_multiplier": max(1, RBS_DESIGN_FULL_REFINEMENT_MULTIPLIER),
-        },
-    }
-    if ranked:
-        response["best"] = ranked[0]
-
-    return jsonify(response)
+    return jsonify(public_task)
 
 
 @app.errorhandler(Exception)
 def _handle_runtime_error(error):
     if request.path in {"/run", "/design"}:
         app.logger.exception("Unhandled exception in %s: %s", request.path, error)
-        payload, status = _error_payload(
-            "Internal server error in API endpoint",
-            detail=traceback.format_exc()[:1000],
-        )
+        payload, status = _error_payload("Internal server error in API endpoint")
         return jsonify(payload), status
     raise error
 

@@ -1242,6 +1242,50 @@
         }
       }
 
+      function updateProgressBar(container, percent) {
+        const safePercent = Math.max(0, Math.min(100, Math.round(percent)));
+        const bar = container.querySelector('.progress-bar');
+        if (!bar) return;
+        bar.style.width = `${safePercent}%`;
+        bar.style.animation = 'none';
+      }
+
+      async function pollTask(taskId, onProgress, onDone) {
+        const poll = async () => {
+          const response = await fetch(`/tasks/${taskId}`);
+          if (!response.ok) {
+            const retryable = response.status >= 500;
+            if (!retryable) {
+              throw new Error('Task not found');
+            }
+            throw new Error(`Task poll failed with status ${response.status}`);
+          }
+          const payload = await response.json();
+          if (!payload.ok) {
+            throw new Error(payload.error || 'Task polling failed');
+          }
+
+          const status = payload.status || 'running';
+          const percent = Number(payload.progress || 0) * 100;
+          const message = payload.message || status;
+          if (typeof onProgress === 'function') {
+            onProgress(payload, percent, message);
+          }
+
+          if (status === 'running' || status === 'queued') {
+            return new Promise((resolve) => setTimeout(resolve, 700)).then(poll);
+          }
+          if (status === 'failed') {
+            throw new Error(payload.error || 'Design task failed.');
+          }
+
+          if (typeof onDone === 'function') {
+            onDone(payload.result || {});
+          }
+        };
+        return poll();
+      }
+
       function renderTopSummary(rows) {
         const exprRows = rows
           .map((row) => ({ row, expr: toNum(row.expression) }))
@@ -1693,6 +1737,7 @@
         const formData = new FormData(form);
         const selectedMode = [...modeRadios].find((radio) => radio.checked)?.value || 'sequence';
         formData.append('inputMode', selectedMode);
+        formData.append('async', '1');
 
         statusEl.textContent = 'Running OSTIR...';
         progressWrap.style.display = 'block';
@@ -1701,6 +1746,35 @@
         statusEl.style.color = '#17315a';
         runBtn.disabled = true;
         spinner.style.opacity = '1';
+        updateProgressBar(progressWrap, 0);
+
+        const applyResult = (resultData) => {
+          const data = resultData || {};
+          renderTable(data.columns, data.rows);
+          summaryEl.textContent = `${Number(data.count || 0)} rows returned`;
+          summaryEl.style.color = '#17315a';
+          statusEl.textContent = '예측 완료';
+          if (data.command) {
+            commandText.textContent = data.command;
+            commandPanel.style.display = 'block';
+          } else {
+            commandPanel.style.display = 'none';
+            commandText.textContent = '';
+          }
+
+          if (Array.isArray(data.rows)) {
+            const csv = toCSV(data.columns, data.rows);
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            downloadLink.href = url;
+            downloadLink.download = 'ostir_results.csv';
+            downloadLink.classList.remove('hidden');
+          } else {
+            downloadLink.classList.add('hidden');
+          }
+
+          updateProgressBar(progressWrap, 100);
+        };
 
         try {
           const response = await fetch('/run', {
@@ -1714,21 +1788,19 @@
             throw new Error(`${data.error || 'Run failed'}${extra}`);
           }
 
-          renderTable(data.columns, data.rows);
-          summaryEl.textContent = `${data.count} rows returned`;
-          summaryEl.style.color = '#17315a';
-          statusEl.textContent = '예측 완료';
-          if (data.command) {
-            commandText.textContent = data.command;
-            commandPanel.style.display = 'block';
+          if (data.task_id) {
+            statusEl.textContent = `Running OSTIR... (0%)`;
+            await pollTask(
+              data.task_id,
+              (payload, percent, message) => {
+                statusEl.textContent = `${message} (${Math.round(percent)}%)`;
+                updateProgressBar(progressWrap, percent);
+              },
+              (result) => applyResult(result)
+            );
+          } else {
+            applyResult(data);
           }
-
-          const csv = toCSV(data.columns, data.rows);
-          const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-          const url = URL.createObjectURL(blob);
-          downloadLink.href = url;
-          downloadLink.download = 'ostir_results.csv';
-          downloadLink.classList.remove('hidden');
         } catch (error) {
           renderTable([], []);
           summaryEl.textContent = 'No output yet';
@@ -1738,6 +1810,7 @@
           commandText.textContent = '';
           statusEl.textContent = `Error: ${error.message}`;
           statusEl.style.color = '#a12525';
+          updateProgressBar(progressWrap, 0);
         } finally {
           progressWrap.style.display = 'none';
           runBtn.disabled = false;
@@ -1748,6 +1821,7 @@
       designForm.addEventListener('submit', async (event) => {
         event.preventDefault();
         const formData = new FormData(designForm);
+        formData.set('async', '1');
         clearDesignDiagnostics();
 
         designStatus.textContent = 'Running RBS designer...';
@@ -1758,6 +1832,7 @@
         designRunBtn.disabled = true;
         designSpinner.style.opacity = '1';
         designSummary.textContent = 'Working...';
+        updateProgressBar(designProgressWrap, 0);
 
         try {
           const response = await fetch('/design', {
@@ -1771,42 +1846,62 @@
             throw new Error(`${data.error || 'Design failed'}${extra}`);
           }
 
-          renderDesignTable(data.columns, data.candidates);
-          renderDesignDiagnostics(data.diagnostics || {});
-          designSummary.textContent = `${data.count} candidates (iterations: ${data.iterations})`;
-          designSummary.style.color = '#17315a';
-          designStatus.textContent = '디자인 완료';
+          const applyResult = (resultData) => {
+            const designData = resultData || data;
+            renderDesignTable(designData.columns, designData.candidates);
+            renderDesignDiagnostics(designData.diagnostics || {});
+            designSummary.textContent = `${designData.count || 0} candidates (iterations: ${designData.iterations || 0})`;
+            designSummary.style.color = '#17315a';
+            designStatus.textContent = '디자인 완료';
+            updateProgressBar(designProgressWrap, 100);
 
-          const warnings = Array.isArray(data.warnings)
-            ? data.warnings.filter((item) => typeof item === 'string' && item.trim())
-            : [];
-          const refineInfo = data.full_refinement || {};
-          const refineMessage = (refineInfo.enabled || false)
-            ? `Full-length reevaluation: enabled for top ${refineInfo.requested_candidates || 0} candidates. ${refineInfo.accepted || 0}/${refineInfo.attempted || 0} candidates passed strict validation.`
-            : 'Full-length reevaluation: skipped (analysis window == input window).';
+            const warnings = Array.isArray(designData.warnings)
+              ? designData.warnings.filter((item) => typeof item === 'string' && item.trim())
+              : [];
+            const refineInfo = designData.full_refinement || {};
+            const refineMessage = (refineInfo.enabled || false)
+              ? `Full-length reevaluation: enabled for top ${refineInfo.requested_candidates || 0} candidates. ${refineInfo.accepted || 0}/${refineInfo.attempted || 0} candidates passed strict validation.`
+              : 'Full-length reevaluation: skipped (analysis window == input window).';
 
-          const messages = [];
-          if (warnings.length) {
-            messages.push(warnings.join('\n'));
-          }
-          if (refineInfo) {
-            messages.push(refineMessage);
-          }
+            const messages = [];
+            if (warnings.length) {
+              messages.push(warnings.join('\n'));
+            }
+            if (refineInfo) {
+              messages.push(refineMessage);
+            }
 
-          if (messages.length) {
-            designWarning.textContent = messages.join('\n');
-            designWarning.classList.remove('hidden');
+            if (messages.length) {
+              designWarning.textContent = messages.join('\n');
+              designWarning.classList.remove('hidden');
+            } else {
+              designWarning.classList.add('hidden');
+              designWarning.textContent = '';
+            }
+
+            const csv = toCSV(designData.columns, designData.candidates);
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            designDownloadLink.href = url;
+            designDownloadLink.download = 'rbs_design_results.csv';
+            designDownloadLink.classList.remove('hidden');
+          };
+
+          if (data.task_id) {
+            designStatus.textContent = `Running RBS designer... (0%)`;
+            await pollTask(
+              data.task_id,
+              (payload, percent, message) => {
+                designStatus.textContent = `${message} (${Math.round(percent)}%)`;
+                updateProgressBar(designProgressWrap, percent);
+              },
+              (result) => {
+                applyResult(result);
+              }
+            );
           } else {
-            designWarning.classList.add('hidden');
-            designWarning.textContent = '';
+            applyResult(data);
           }
-
-          const csv = toCSV(data.columns, data.candidates);
-          const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-          const url = URL.createObjectURL(blob);
-          designDownloadLink.href = url;
-          designDownloadLink.download = 'rbs_design_results.csv';
-          designDownloadLink.classList.remove('hidden');
         } catch (error) {
           designSummary.textContent = 'No output yet';
           designSummary.style.color = '#17315a';

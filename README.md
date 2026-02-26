@@ -1,4 +1,4 @@
-# RBS_cal (v1.1.02)
+# RBS_cal (v1.1.04)
 
 RBS expression estimation and RBS design web UI powered by OSTIR.
 
@@ -38,7 +38,7 @@ Windows launcher is included:
 Run this `.bat` file by double-clicking.
 
 Behavior:
-- 버전: `v1.1.03`
+- 버전: `v1.1.04`
 - 로컬 `.venv` 기반 실행입니다. (`.conda_venv` 자동 생성/실행은 사용하지 않음)
 - ViennaRNA는 우선순위로 다음을 사용합니다.
   1) `bin\` 폴더의 CLI (`RNAfold`, `RNAsubopt`, `RNAeval`, 확장자 `.exe` 포함)
