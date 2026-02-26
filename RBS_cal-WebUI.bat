@@ -16,88 +16,76 @@ set "PYTHON_EXE="
 set "PYTHON_ARGS="
 set "CONDA_EXE="
 set "RUNTIME_MODE=venv"
+set "OSTIR_BIN="
 
 if exist "%LOG_FILE%" del "%LOG_FILE%" >nul 2>&1
 
 call :log "== RBS_cal WebUI start =="
 call :log "Project directory: %PROJECT_DIR%"
-
 echo [RBS_cal] start
 echo %LOG_FILE%
 
-if not exist "%PROJECT_DIR%\app.py" (
-  echo ERROR: app.py not found.
-  goto fail
-)
-
-cd /d "%PROJECT_DIR%"
-if errorlevel 1 (
-  echo ERROR: cannot change directory.
-  goto fail
-)
+if not exist "%PROJECT_DIR%\app.py" goto :missing_app
+cd /d "%PROJECT_DIR%" >nul 2>&1
+if not "%errorlevel%"=="0" goto :fail
 
 call :detect_conda
-if defined CONDA_EXE (
-  echo [RUNTIME] conda detected: %CONDA_EXE%
-  call :init_conda_runtime
-  if errorlevel 1 (
-    echo [RUNTIME] conda bootstrap failed. Falling back to venv mode.
-    set "RUNTIME_MODE=venv"
-  ) else (
-    set "RUNTIME_MODE=conda"
-  )
-)
+if not defined CONDA_EXE goto :skip_conda
 
-if "%RUNTIME_MODE%"=="venv" (
-  call :init_venv_runtime
-  if errorlevel 1 goto fail
-)
+echo [RUNTIME] conda detected: %CONDA_EXE%
+call :init_conda_runtime
+if not "%errorlevel%"=="0" goto :conda_failed
+set "RUNTIME_MODE=conda"
+goto :runtime_path_conda
 
-if not exist "%PYTHON_EXE%" (
-  echo ERROR: Python not found.
-  goto fail
-)
+:conda_failed
+echo [RUNTIME] conda bootstrap failed. Falling back to venv mode.
 
-if "%RUNTIME_MODE%"=="conda" (
-  set "CONDA_PREFIX=%CONDA_ENV_DIR%"
-  set "RBS_CAL_CONDA_ENV=%CONDA_ENV_DIR%"
-  if exist "%CONDA_ENV_DIR%\Scripts" set "PATH=%CONDA_ENV_DIR%\Scripts;%PATH%"
-  if exist "%CONDA_ENV_DIR%\Library\bin" set "PATH=%CONDA_ENV_DIR%\Library\bin;%PATH%"
-  if exist "%CONDA_ENV_DIR%\bin" set "PATH=%CONDA_ENV_DIR%\bin;%PATH%"
-  echo [RUNTIME] using conda env: %CONDA_ENV_DIR%
-) else (
-  if exist "%VENV_DIR%\Scripts" set "PATH=%VENV_DIR%\Scripts;%PATH%"
-  echo [RUNTIME] using venv: %VENV_DIR%
-)
+:skip_conda
+
+set "RUNTIME_MODE=venv"
+call :init_venv_runtime
+if not "%errorlevel%"=="0" goto :fail
+goto :runtime_path_venv
+
+:runtime_path_conda
+set "CONDA_PREFIX=%CONDA_ENV_DIR%"
+set "RBS_CAL_CONDA_ENV=%CONDA_ENV_DIR%"
+if exist "%CONDA_ENV_DIR%\Scripts" set "PATH=%CONDA_ENV_DIR%\Scripts;!PATH!"
+if exist "%CONDA_ENV_DIR%\Library\bin" set "PATH=%CONDA_ENV_DIR%\Library\bin;!PATH!"
+if exist "%CONDA_ENV_DIR%\bin" set "PATH=%CONDA_ENV_DIR%\bin;!PATH!"
+echo [RUNTIME] using conda env: %CONDA_ENV_DIR%
+goto :runtime_path_done
+
+:runtime_path_venv
+if exist "%VENV_DIR%\Scripts" set "PATH=%VENV_DIR%\Scripts;!PATH!"
+echo [RUNTIME] using venv: %VENV_DIR%
+goto :runtime_path_done
+
+:runtime_path_done
+if not exist "%PYTHON_EXE%" goto :missing_python
 
 echo install base libs...
 "%PYTHON_EXE%" -m pip install --upgrade pip setuptools wheel >>"%LOG_FILE%" 2>&1
-if errorlevel 1 goto fail
+if not "%errorlevel%"=="0" goto :fail
 "%PYTHON_EXE%" -m pip install -r "%PROJECT_DIR%\requirements.txt" >>"%LOG_FILE%" 2>&1
-if errorlevel 1 goto fail
+if not "%errorlevel%"=="0" goto :fail
 
 call :log "Check OSTIR"
 call :find_ostir
 if not defined OSTIR_BIN (
   echo OSTIR not found. Try install from PyPI...
   "%PYTHON_EXE%" -m pip install ostir >>"%LOG_FILE%" 2>&1
-  if errorlevel 1 goto fail
+  if not "%errorlevel%"=="0" goto :fail
   call :find_ostir
 )
-if defined OSTIR_BIN (
-  echo OSTIR=%OSTIR_BIN%
-  set "OSTIR_BIN=%OSTIR_BIN%"
-) else (
-  echo WARNING: OSTIR not found.
-  echo.
-  echo Please install ostir manually:
-  echo   %VENV_DIR%\Scripts\python.exe -m pip install ostir
-  goto fail
-)
+if not defined OSTIR_BIN goto :missing_ostir
+echo OSTIR=%OSTIR_BIN%
+set "OSTIR_BIN=%OSTIR_BIN%"
 
 echo Check ViennaRNA (RNA) module...
 call :check_vienna_runtime
-if errorlevel 1 goto fail
+if not "%errorlevel%"=="0" goto :fail
 
 echo ---
 echo [ViennaRNA command path check after runtime probe]
@@ -106,7 +94,7 @@ echo ---
 
 set "PORT_SEARCH=%PORT%"
 :find_port
-if %PORT_SEARCH% gtr %MAX_PORT% goto fail
+if %PORT_SEARCH% gtr %MAX_PORT% goto :fail
 netstat -ano | findstr ":%PORT_SEARCH% " >nul 2>&1
 if not errorlevel 1 (
   set /a PORT_SEARCH=%PORT_SEARCH%+1
@@ -119,9 +107,9 @@ echo URL=%URL%
 
 echo Starting Flask app...
 start "" /B "%PYTHON_EXE%" "%PROJECT_DIR%\app.py" >>"%LOG_FILE%" 2>&1
-if errorlevel 1 goto fail
+if not "%errorlevel%"=="0" goto :fail
 call :wait_for_server
-if errorlevel 1 goto fail
+if not "%errorlevel%"=="0" goto :fail
 
 echo Open browser...
 start "" "%URL%"
@@ -129,6 +117,21 @@ start "" "%URL%"
 echo Server started on %URL%
 
 goto done
+
+:missing_app
+echo ERROR: app.py not found.
+goto fail
+
+:missing_python
+echo ERROR: Python not found.
+goto fail
+
+:missing_ostir
+echo WARNING: OSTIR not found.
+echo.
+echo Please install ostir manually:
+echo   %VENV_DIR%\Scripts\python.exe -m pip install ostir
+goto fail
 
 :fail
 if exist "%LOG_FILE%" type "%LOG_FILE%"
@@ -167,77 +170,83 @@ echo [%TS%] %~1>>"%LOG_FILE%"
 exit /b 0
 
 :detect_conda
+set "CONDA_EXE="
 where conda 2>nul | findstr "." >nul
-if errorlevel 1 (
-  set "CONDA_EXE="
-  for %%P in (
-    "%ProgramData%\miniconda3\Scripts\conda.exe"
-    "%ProgramData%\Anaconda3\Scripts\conda.exe"
-    "%ProgramFiles%\Miniconda3\Scripts\conda.exe"
-    "%ProgramFiles%\Anaconda3\Scripts\conda.exe"
-    "%LocalAppData%\Miniconda3\Scripts\conda.exe"
-    "%LocalAppData%\Anaconda3\Scripts\conda.exe"
-    "%USERPROFILE%\miniconda3\Scripts\conda.exe"
-    "%USERPROFILE%\Anaconda3\Scripts\conda.exe"
-    "%USERPROFILE%\anaconda3\Scripts\conda.exe"
-    "%USERPROFILE%\AppData\Local\miniconda3\Scripts\conda.exe"
-    "%USERPROFILE%\AppData\Local\Anaconda3\Scripts\conda.exe"
-  ) do (
-    if exist "%%~P" if not defined CONDA_EXE set "CONDA_EXE=%%~P"
-  )
-  if not defined CONDA_EXE (
-    exit /b 1
-  )
-  exit /b 0
-)
+if not "%errorlevel%"=="0" goto :detect_conda_scan
 for /f "delims=" %%p in ('where conda 2^>nul') do if not defined CONDA_EXE set "CONDA_EXE=%%~fp"
-exit /b 0
+if defined CONDA_EXE exit /b 0
+exit /b 1
+
+:detect_conda_scan
+for %%P in (
+  "%ProgramData%\miniconda3\Scripts\conda.exe"
+  "%ProgramData%\Anaconda3\Scripts\conda.exe"
+  "%ProgramFiles%\Miniconda3\Scripts\conda.exe"
+  "%ProgramFiles%\Anaconda3\Scripts\conda.exe"
+  "%LocalAppData%\Miniconda3\Scripts\conda.exe"
+  "%LocalAppData%\Anaconda3\Scripts\conda.exe"
+  "%USERPROFILE%\miniconda3\Scripts\conda.exe"
+  "%USERPROFILE%\Anaconda3\Scripts\conda.exe"
+  "%USERPROFILE%\anaconda3\Scripts\conda.exe"
+  "%USERPROFILE%\AppData\Local\miniconda3\Scripts\conda.exe"
+  "%USERPROFILE%\AppData\Local\Anaconda3\Scripts\conda.exe"
+) do if not defined CONDA_EXE if exist "%%~P" set "CONDA_EXE=%%~P"
+
+if defined CONDA_EXE exit /b 0
+exit /b 1
 
 :init_conda_runtime
 if not defined CONDA_EXE exit /b 1
-if not exist "%CONDA_ENV_DIR%\python.exe" (
-  echo create conda env (runtime)...
-  "%CONDA_EXE%" create -y -p "%CONDA_ENV_DIR%" python=3.11 >>"%LOG_FILE%" 2>&1
-  if errorlevel 1 (
-    echo ERROR: conda environment create failed.
-    exit /b 1
-  )
+if not exist "%CONDA_ENV_DIR%\python.exe" goto :create_conda_runtime
+set "PYTHON_EXE=%CONDA_ENV_DIR%\python.exe"
+goto :conda_runtime_ready
+
+:create_conda_runtime
+echo create conda env (runtime)...
+"%CONDA_EXE%" create -y -p "%CONDA_ENV_DIR%" python=3.11 >>"%LOG_FILE%" 2>&1
+if not "%errorlevel%"=="0" (
+  echo ERROR: conda environment create failed.
+  exit /b 1
 )
+
+:conda_runtime_ready
 if not exist "%CONDA_ENV_DIR%\python.exe" (
   echo ERROR: conda environment not found after create: %CONDA_ENV_DIR%
   exit /b 1
 )
-
 set "PYTHON_EXE=%CONDA_ENV_DIR%\python.exe"
-if exist "%CONDA_ENV_DIR%\Scripts" set "PATH=%CONDA_ENV_DIR%\Scripts;%PATH%"
-if exist "%CONDA_ENV_DIR%\Library\bin" set "PATH=%CONDA_ENV_DIR%\Library\bin;%PATH%"
 if not exist "%PYTHON_EXE%" exit /b 1
+if exist "%CONDA_ENV_DIR%\Scripts" set "PATH=%CONDA_ENV_DIR%\Scripts;!PATH!"
+if exist "%CONDA_ENV_DIR%\Library\bin" set "PATH=%CONDA_ENV_DIR%\Library\bin;!PATH!"
+if exist "%CONDA_ENV_DIR%\bin" set "PATH=%CONDA_ENV_DIR%\bin;!PATH!"
 exit /b 0
 
 :init_venv_runtime
-if exist "%VENV_DIR%\Scripts\python.exe" (
-  set "PYTHON_EXE=%VENV_DIR%\Scripts\python.exe"
-) else (
-  where py >nul 2>nul
-  if not errorlevel 1 (
-    set "PYTHON_EXE=py"
-    set "PYTHON_ARGS=-3"
-  ) else (
-    where python >nul 2>nul
-    if errorlevel 1 (
-      echo ERROR: Python 3 not found.
-      exit /b 1
-    )
-    set "PYTHON_EXE=python"
-  )
+set "PYTHON_EXE="
+set "PYTHON_ARGS="
+if exist "%VENV_DIR%\Scripts\python.exe" set "PYTHON_EXE=%VENV_DIR%\Scripts\python.exe"
+if not defined PYTHON_EXE where py >nul 2>nul
+if not errorlevel 1 if not defined PYTHON_EXE (
+  set "PYTHON_EXE=py"
+  set "PYTHON_ARGS=-3"
+)
+if not defined PYTHON_EXE where python >nul 2>nul
+if not errorlevel 1 if not defined PYTHON_EXE set "PYTHON_EXE=python"
+
+if not defined PYTHON_EXE (
+  echo ERROR: Python 3 not found.
+  exit /b 1
 )
 
-if not exist "%VENV_DIR%\Scripts\python.exe" (
-  echo create venv.
-  "%PYTHON_EXE%" %PYTHON_ARGS% -m venv "%VENV_DIR%"
-  if errorlevel 1 exit /b 1
-)
+if not exist "%VENV_DIR%\Scripts\python.exe" goto :create_venv
+goto :venv_runtime_done
 
+:create_venv
+echo create venv.
+"%PYTHON_EXE%" %PYTHON_ARGS% -m venv "%VENV_DIR%"
+if not "%errorlevel%"=="0" exit /b 1
+
+:venv_runtime_done
 set "PYTHON_EXE=%VENV_DIR%\Scripts\python.exe"
 if not exist "%PYTHON_EXE%" exit /b 1
 exit /b 0
@@ -281,72 +290,66 @@ exit /b 1
 :check_vienna_runtime
 if not exist "%PYTHON_EXE%" exit /b 1
 set "VN_BASE=%VENV_DIR%"
-set "VIENNARNA_MISSING="
 if "%RUNTIME_MODE%"=="conda" set "VN_BASE=%CONDA_ENV_DIR%"
-
+set "VIENNARNA_MISSING="
 echo.
 echo [ViennaRNA] checking local runtime and command-line executables...
 call :activate_local_vienna_bin
 
+for %%b in (RNAfold RNAsubopt RNAeval) do call :ensure_vienna_command %%b
+
+set "VIENNARNA_MISSING="
 for %%b in (RNAfold RNAsubopt RNAeval) do (
   call :ensure_vienna_command %%b
-  if errorlevel 1 (
-    set "VIENNARNA_MISSING=1"
-  )
+  if not "%errorlevel%"=="0" set "VIENNARNA_MISSING=1"
 )
 
-if not defined VIENNARNA_MISSING (
-  echo ViennaRNA command-line dependencies are already available.
-  exit /b 0
-)
+if not defined VIENNARNA_MISSING goto :viennarna_ok
 
 echo [ViennaRNA] required CLI not found in PATH. Checking ViennaRNA Python module/ wheel...
 where RNAfold 2>nul | findstr "." >nul
-if errorlevel 1 (
-  "%PYTHON_EXE%" -c "import RNA" >nul 2>&1
-  if errorlevel 1 (
-    echo RNA module not found. Trying local ViennaRNA wheel...
-    call :install_vienna_wheel_local
-    if errorlevel 1 (
-      echo [WARN] No local wheel installation succeeded for ViennaRNA.
-    )
-  ) else (
-    echo RNA module already installed.
-  )
-) else (
-  echo RNA command-line binary found on PATH.
-)
+if not "%errorlevel%"=="0" goto :viennarna_needs_module_check
+echo RNA command-line binary found on PATH.
+goto :viennarna_command_recheck
 
+:viennarna_needs_module_check
+"%PYTHON_EXE%" -c "import RNA" >nul 2>&1
+if "%errorlevel%"=="0" goto :viennarna_command_recheck
+echo RNA module not found. Trying local ViennaRNA wheel...
+call :install_vienna_wheel_local
+if not "%errorlevel%"=="0" echo [WARN] No local wheel installation succeeded for ViennaRNA.
+
+:viennarna_command_recheck
+set "VIENNARNA_MISSING="
 for %%b in (RNAfold RNAsubopt RNAeval) do (
   call :ensure_vienna_command %%b
-  if errorlevel 1 (
-    set "VIENNARNA_MISSING=1"
-  )
+  if not "%errorlevel%"=="0" set "VIENNARNA_MISSING=1"
 )
 
-if defined VIENNARNA_MISSING if "%RUNTIME_MODE%"=="conda" (
-  echo [ViennaRNA] still missing. trying conda install in %CONDA_ENV_DIR%...
-  call :install_vienna_conda
-  if errorlevel 1 (
-    set "VIENNARNA_MISSING=1"
-  ) else (
-    set "VIENNARNA_MISSING="
-    for %%b in (RNAfold RNAsubopt RNAeval) do (
-      call :ensure_vienna_command %%b
-      if errorlevel 1 (
-        set "VIENNARNA_MISSING=1"
-      )
-    )
-  )
-)
+if defined VIENNARNA_MISSING if "%RUNTIME_MODE%"=="conda" goto :viennarna_conda_retry
+if defined VIENNARNA_MISSING goto :viennarna_failed
+goto :viennarna_ok
 
-if defined VIENNARNA_MISSING (
-  echo ERROR: One or more required ViennaRNA command-line tools are missing.
-  echo See above for each command and location.
-  exit /b 1
+:viennarna_conda_retry
+echo [ViennaRNA] still missing. trying conda install in %CONDA_ENV_DIR%...
+call :install_vienna_conda
+if not "%errorlevel%"=="0" goto :viennarna_failed
+
+set "VIENNARNA_MISSING="
+for %%b in (RNAfold RNAsubopt RNAeval) do (
+  call :ensure_vienna_command %%b
+  if not "%errorlevel%"=="0" set "VIENNARNA_MISSING=1"
 )
-echo ViennaRNA dependency check passed.
+if defined VIENNARNA_MISSING goto :viennarna_failed
+
+:viennarna_ok
+echo ViennaRNA command-line dependencies are ready.
 exit /b 0
+
+:viennarna_failed
+echo ERROR: One or more required ViennaRNA command-line tools are missing.
+echo See above for each command and location.
+exit /b 1
 
 :activate_local_vienna_bin
 if not exist "%LOCAL_VIENNA_BIN_DIR%\RNAfold.exe" if not exist "%LOCAL_VIENNA_BIN_DIR%\RNAfold" (
@@ -354,7 +357,7 @@ if not exist "%LOCAL_VIENNA_BIN_DIR%\RNAfold.exe" if not exist "%LOCAL_VIENNA_BI
     if not exist "%LOCAL_VIENNA_BIN_DIR%\RNAeval.exe" if not exist "%LOCAL_VIENNA_BIN_DIR%\RNAeval" exit /b 0
   )
 )
-set "PATH=%LOCAL_VIENNA_BIN_DIR%;%PATH%"
+set "PATH=%LOCAL_VIENNA_BIN_DIR%;!PATH!"
 echo Added local ViennaRNA binary directory: %LOCAL_VIENNA_BIN_DIR%
 exit /b 0
 
@@ -404,7 +407,7 @@ if defined VN_BASE if not defined FOUND_DIR call :find_vienna_command_dir "%VN_B
 if defined CONDA_PREFIX if not defined FOUND_DIR call :find_vienna_command_dir "%CONDA_PREFIX%\Library\bin" "%cmd%"
 if defined CONDA_PREFIX if not defined FOUND_DIR call :find_vienna_command_dir "%CONDA_PREFIX%\Scripts" "%cmd%"
 if defined FOUND_DIR (
-  set "PATH=%FOUND_DIR%;%PATH%"
+  set "PATH=%FOUND_DIR%;!PATH!"
   echo Added fallback ViennaRNA directory for %cmd%: %FOUND_DIR%
   call :check_vienna_command "%cmd%"
   exit /b %errorlevel%
@@ -475,7 +478,7 @@ if errorlevel 1 (
   echo   %CONDA_EXE% install -y -p "%CONDA_ENV_DIR%" -c conda-forge -c bioconda viennarna
   exit /b 1
 )
-if exist "%CONDA_ENV_DIR%\Library\bin" set "PATH=%CONDA_ENV_DIR%\Library\bin;%PATH%"
+if exist "%CONDA_ENV_DIR%\Library\bin" set "PATH=%CONDA_ENV_DIR%\Library\bin;!PATH!"
 exit /b 0
 
 :diagnose_vienna_path
