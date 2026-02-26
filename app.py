@@ -497,6 +497,16 @@ def _candidate_paths() -> List[str]:
     if conda_prefix:
         search_dirs.append(Path(conda_prefix) / "Scripts")
         search_dirs.append(Path(conda_prefix) / "bin")
+    conda_env_dir = (
+        os.environ.get("CONDA_ENV_DIR")
+        or os.environ.get("RBS_CAL_CONDA_ENV")
+        or os.environ.get("RBS_CAL_VENV")
+    )
+    if conda_env_dir:
+        search_dirs.append(Path(conda_env_dir) / "Scripts")
+        search_dirs.append(Path(conda_env_dir) / "bin")
+    if os.name == "nt":
+        search_dirs.append(Path(__file__).resolve().parent / ".conda_venv" / "Scripts")
 
     for directory in search_dirs:
         for name in search_names:

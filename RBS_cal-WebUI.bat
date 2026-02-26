@@ -11,6 +11,7 @@ set "LOCAL_VIENNA_BIN_DIR=%PROJECT_DIR%\bin"
 set "HOST=127.0.0.1"
 set "PORT=8000"
 set "MAX_PORT=8010"
+set "SERVER_READY_TIMEOUT=60"
 set "PYTHON_EXE="
 set "PYTHON_ARGS="
 set "CONDA_EXE="
@@ -58,8 +59,14 @@ if not exist "%PYTHON_EXE%" (
 )
 
 if "%RUNTIME_MODE%"=="conda" (
+  set "CONDA_PREFIX=%CONDA_ENV_DIR%"
+  set "RBS_CAL_CONDA_ENV=%CONDA_ENV_DIR%"
+  if exist "%CONDA_ENV_DIR%\Scripts" set "PATH=%CONDA_ENV_DIR%\Scripts;%PATH%"
+  if exist "%CONDA_ENV_DIR%\Library\bin" set "PATH=%CONDA_ENV_DIR%\Library\bin;%PATH%"
+  if exist "%CONDA_ENV_DIR%\bin" set "PATH=%CONDA_ENV_DIR%\bin;%PATH%"
   echo [RUNTIME] using conda env: %CONDA_ENV_DIR%
 ) else (
+  if exist "%VENV_DIR%\Scripts" set "PATH=%VENV_DIR%\Scripts;%PATH%"
   echo [RUNTIME] using venv: %VENV_DIR%
 )
 
@@ -79,6 +86,7 @@ if not defined OSTIR_BIN (
 )
 if defined OSTIR_BIN (
   echo OSTIR=%OSTIR_BIN%
+  set "OSTIR_BIN=%OSTIR_BIN%"
 ) else (
   echo WARNING: OSTIR not found.
   echo.
@@ -109,12 +117,16 @@ set "URL=http://%HOST%:%PORT%"
 
 echo URL=%URL%
 
+echo Starting Flask app...
+start "" /B "%PYTHON_EXE%" "%PROJECT_DIR%\app.py" >>"%LOG_FILE%" 2>&1
+if errorlevel 1 goto fail
+call :wait_for_server
+if errorlevel 1 goto fail
+
 echo Open browser...
 start "" "%URL%"
 
-echo Run app.py ...
-"%PYTHON_EXE%" "%PROJECT_DIR%\app.py" >>"%LOG_FILE%" 2>&1
-if errorlevel 1 goto fail
+echo Server started on %URL%
 
 goto done
 
@@ -125,13 +137,29 @@ echo FAILED. Keep this window open.
 pause
 exit /b 1
 
-goto :eof
-
 :done
-call :log "Server stopped"
+call :log "Flask app launch sequence complete"
 echo DONE.
 pause
 exit /b 0
+
+:wait_for_server
+set "WAIT_ATTEMPT=0"
+:wait_for_server_loop
+set /a WAIT_ATTEMPT+=1
+if %WAIT_ATTEMPT% gtr %SERVER_READY_TIMEOUT% (
+  echo ERROR: Flask app did not start within %SERVER_READY_TIMEOUT% seconds.
+  echo.
+  echo Last log output:
+  if exist "%LOG_FILE%" type "%LOG_FILE%"
+  exit /b 1
+)
+if exist "%LOG_FILE%" (
+  findstr /C:"Running on http://%HOST%:%PORT%" "%LOG_FILE%" >nul 2>&1
+  if not errorlevel 1 exit /b 0
+)
+ping -n 2 127.0.0.1 >nul
+goto wait_for_server_loop
 
 :log
 set "TS=%date% %time%"
