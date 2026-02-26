@@ -32,14 +32,14 @@ if not "%errorlevel%"=="0" goto :fail
 call :detect_conda
 if not defined CONDA_EXE goto :skip_conda
 
-echo [RUNTIME] conda detected: %CONDA_EXE%
+call :log "[RUNTIME] conda detected: %CONDA_EXE%"
 call :init_conda_runtime
 if not "%errorlevel%"=="0" goto :conda_failed
 set "RUNTIME_MODE=conda"
 goto :runtime_path_conda
 
 :conda_failed
-echo [RUNTIME] conda bootstrap failed. Falling back to venv mode.
+call :log "[RUNTIME] conda bootstrap failed. Falling back to venv mode."
 
 :skip_conda
 
@@ -54,16 +54,19 @@ set "RBS_CAL_CONDA_ENV=%CONDA_ENV_DIR%"
 if exist "%CONDA_ENV_DIR%\Scripts" set "PATH=%CONDA_ENV_DIR%\Scripts;!PATH!"
 if exist "%CONDA_ENV_DIR%\Library\bin" set "PATH=%CONDA_ENV_DIR%\Library\bin;!PATH!"
 if exist "%CONDA_ENV_DIR%\bin" set "PATH=%CONDA_ENV_DIR%\bin;!PATH!"
-echo [RUNTIME] using conda env: %CONDA_ENV_DIR%
+call :log "[RUNTIME] using conda env: %CONDA_ENV_DIR%"
+call :log "[RUNTIME] conda prefix env var: %CONDA_PREFIX%"
 goto :runtime_path_done
 
 :runtime_path_venv
 if exist "%VENV_DIR%\Scripts" set "PATH=%VENV_DIR%\Scripts;!PATH!"
-echo [RUNTIME] using venv: %VENV_DIR%
+call :log "[RUNTIME] using venv: %VENV_DIR%"
 goto :runtime_path_done
 
 :runtime_path_done
 if not exist "%PYTHON_EXE%" goto :missing_python
+call :log "Runtime context snapshot:"
+call :log_runtime_context
 
 echo install base libs...
 "%PYTHON_EXE%" -m pip install --upgrade pip setuptools wheel >>"%LOG_FILE%" 2>&1
@@ -82,6 +85,7 @@ if not defined OSTIR_BIN (
 if not defined OSTIR_BIN goto :missing_ostir
 echo OSTIR=%OSTIR_BIN%
 set "OSTIR_BIN=%OSTIR_BIN%"
+call :log_ostir_binary
 
 echo Check ViennaRNA (RNA) module...
 call :check_vienna_runtime
@@ -174,6 +178,64 @@ goto wait_for_server_loop
 :log
 set "TS=%date% %time%"
 echo [%TS%] %~1>>"%LOG_FILE%"
+exit /b 0
+
+:log_runtime_context
+call :log "  RUNTIME_MODE=%RUNTIME_MODE%"
+call :log "  PROJECT_DIR=%PROJECT_DIR%"
+call :log "  VENV_DIR=%VENV_DIR%"
+call :log "  CONDA_ENV_DIR=%CONDA_ENV_DIR%"
+call :log "  CONDA_EXE=%CONDA_EXE%"
+call :log "  CONDA_PREFIX=%CONDA_PREFIX%"
+call :log "  PYTHON_ARGS=%PYTHON_ARGS%"
+call :log "  PYTHON_EXE=%PYTHON_EXE%"
+call :log "  PATH sample:"
+setlocal EnableDelayedExpansion
+for /f "tokens=1-10 delims=;" %%A in ("!PATH!") do (
+  if "%%A" neq "" call :log "    PATH[1]=%%A"
+  if "%%B" neq "" call :log "    PATH[2]=%%B"
+  if "%%C" neq "" call :log "    PATH[3]=%%C"
+  if "%%D" neq "" call :log "    PATH[4]=%%D"
+  if "%%E" neq "" call :log "    PATH[5]=%%E"
+  if "%%F" neq "" call :log "    PATH[6]=%%F"
+  if "%%G" neq "" call :log "    PATH[7]=%%G"
+  if "%%H" neq "" call :log "    PATH[8]=%%H"
+  if "%%I" neq "" call :log "    PATH[9]=%%I"
+  if "%%J" neq "" call :log "    PATH[10]=%%J"
+)
+endlocal
+exit /b 0
+
+:log_ostir_binary
+call :log "  OSTIR_BIN=%OSTIR_BIN%"
+if defined OSTIR_BIN (
+  if exist "%OSTIR_BIN%" (
+    echo OSTIR binary exists: %OSTIR_BIN%
+  ) else (
+    echo OSTIR path exists in variable but file missing: %OSTIR_BIN%
+  )
+) else (
+  echo OSTIR binary was not resolved.
+)
+where ostir 2>nul | findstr "." >nul
+if "%errorlevel%"=="0" (
+  echo where ostir => output:
+  where ostir
+) else (
+  echo where ostir => not found in PATH
+)
+if "%RUNTIME_MODE%"=="conda" (
+  echo OSTIR in conda env:
+  if exist "%CONDA_ENV_DIR%\Scripts\ostir.exe" echo   %CONDA_ENV_DIR%\Scripts\ostir.exe
+  if exist "%CONDA_ENV_DIR%\Scripts\ostir" echo   %CONDA_ENV_DIR%\Scripts\ostir
+  if exist "%CONDA_ENV_DIR%\Scripts\ostir-script.py" echo   %CONDA_ENV_DIR%\Scripts\ostir-script.py
+) else (
+  echo OSTIR in venv:
+  if exist "%VENV_DIR%\Scripts\ostir.exe" echo   %VENV_DIR%\Scripts\ostir.exe
+  if exist "%VENV_DIR%\Scripts\ostir" echo   %VENV_DIR%\Scripts\ostir
+  if exist "%VENV_DIR%\Scripts\ostir-script.py" echo   %VENV_DIR%\Scripts\ostir-script.py
+)
+echo.
 exit /b 0
 
 :detect_conda
@@ -298,6 +360,7 @@ exit /b 1
 if not exist "%PYTHON_EXE%" exit /b 1
 set "VN_BASE=%VENV_DIR%"
 if "%RUNTIME_MODE%"=="conda" set "VN_BASE=%CONDA_ENV_DIR%"
+call :log "[ViennaRNA] VN_BASE=%VN_BASE%"
 set "VIENNARNA_MISSING="
 echo.
 echo [ViennaRNA] checking local runtime and command-line executables...
@@ -514,6 +577,52 @@ call :check_vienna_command RNAfold
 call :check_vienna_command RNAsubopt
 call :check_vienna_command RNAeval
 echo.
-echo PATH prefix sample:
-echo   %PATH%
+call :log_runtime_path_prefix
+echo.
+echo ViennaRNA runtime diagnostics:
+if exist "%LOCAL_VIENNA_WHEEL_DIR%" (
+  if exist "%LOCAL_VIENNA_WHEEL_DIR%\ViennaRNA-*.whl" (
+    echo   ViennaRNA wheels:
+    dir /b "%LOCAL_VIENNA_WHEEL_DIR%\ViennaRNA-*.whl"
+  ) else (
+    echo   [MISSING] ViennaRNA wheel file under: %LOCAL_VIENNA_WHEEL_DIR%
+  )
+) else (
+  echo   [MISSING] ViennaRNA wheel directory: %LOCAL_VIENNA_WHEEL_DIR%
+)
+if exist "%LOCAL_VIENNA_BIN_DIR%\RNAfold.exe" echo   local bin: %LOCAL_VIENNA_BIN_DIR%\RNAfold.exe
+if exist "%LOCAL_VIENNA_BIN_DIR%\RNAsubopt.exe" echo   local bin: %LOCAL_VIENNA_BIN_DIR%\RNAsubopt.exe
+if exist "%LOCAL_VIENNA_BIN_DIR%\RNAeval.exe" echo   local bin: %LOCAL_VIENNA_BIN_DIR%\RNAeval.exe
+if exist "%LOCAL_VIENNA_BIN_DIR%\RNAfold" echo   local bin: %LOCAL_VIENNA_BIN_DIR%\RNAfold
+if exist "%LOCAL_VIENNA_BIN_DIR%\RNAsubopt" echo   local bin: %LOCAL_VIENNA_BIN_DIR%\RNAsubopt
+if exist "%LOCAL_VIENNA_BIN_DIR%\RNAeval" echo   local bin: %LOCAL_VIENNA_BIN_DIR%\RNAeval
+echo   VN_BASE=%VN_BASE%
+if defined CONDA_PREFIX echo   CONDA_PREFIX=%CONDA_PREFIX%
+if defined CONDA_ENV_DIR echo   CONDA_ENV_DIR=%CONDA_ENV_DIR%
+if defined VENV_DIR echo   VENV_DIR=%VENV_DIR%
+if exist "%CONDA_ENV_DIR%\Library\bin" echo   candidate: %CONDA_ENV_DIR%\Library\bin
+if exist "%CONDA_ENV_DIR%\Scripts" echo   candidate: %CONDA_ENV_DIR%\Scripts
+if exist "%CONDA_ENV_DIR%\bin" echo   candidate: %CONDA_ENV_DIR%\bin
+if exist "%VENV_DIR%\Scripts" echo   candidate: %VENV_DIR%\Scripts
+if exist "%CONDA_ENV_DIR%\Lib\site-packages\RNA\bin" echo   candidate: %CONDA_ENV_DIR%\Lib\site-packages\RNA\bin
+if exist "%CONDA_ENV_DIR%\Lib\site-packages\RNA\Scripts" echo   candidate: %CONDA_ENV_DIR%\Lib\site-packages\RNA\Scripts
+if exist "%CONDA_ENV_DIR%\Lib\site-packages\RNA" echo   candidate: %CONDA_ENV_DIR%\Lib\site-packages\RNA
+if exist "%CONDA_ENV_DIR%\Lib\site-packages" echo   candidate: %CONDA_ENV_DIR%\Lib\site-packages
+exit /b 0
+
+:log_runtime_path_prefix
+setlocal EnableDelayedExpansion
+for /f "tokens=1-10 delims=;" %%A in ("!PATH!") do (
+  if "%%A" neq "" echo    PATH[1]=%%A
+  if "%%B" neq "" echo    PATH[2]=%%B
+  if "%%C" neq "" echo    PATH[3]=%%C
+  if "%%D" neq "" echo    PATH[4]=%%D
+  if "%%E" neq "" echo    PATH[5]=%%E
+  if "%%F" neq "" echo    PATH[6]=%%F
+  if "%%G" neq "" echo    PATH[7]=%%G
+  if "%%H" neq "" echo    PATH[8]=%%H
+  if "%%I" neq "" echo    PATH[9]=%%I
+  if "%%J" neq "" echo    PATH[10]=%%J
+)
+endlocal
 exit /b 0

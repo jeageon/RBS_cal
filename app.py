@@ -58,6 +58,82 @@ def _error_payload(message: str, status: int = 500, detail: Optional[str] = None
     return payload, status
 
 
+def _shorten_list(values: List[str], max_items: int = 12) -> List[str]:
+    return values[:max_items]
+
+
+def _path_prefix_values(path_value: str, max_items: int = 12) -> List[str]:
+    entries: List[str] = []
+    for item in path_value.split(os.pathsep):
+        item = item.strip().strip('"')
+        if item:
+            entries.append(item)
+        if len(entries) >= max_items:
+            break
+    return entries
+
+
+def _command_locations(command_names: Tuple[str, ...]) -> Dict[str, str]:
+    return {name: (shutil.which(name) or "<missing>") for name in _normalize_command_names(command_names)}
+
+
+def _log_viennarna_startup_context(candidate_dirs: List[Path]) -> None:
+    print(
+        "[Startup] Python executable: {}".format(sys.executable),
+        file=sys.stderr,
+        flush=True,
+    )
+    print(
+        "[Startup] Python prefix/base_prefix: {}/{}".format(
+            sys.prefix, sys.base_prefix
+        ),
+        file=sys.stderr,
+        flush=True,
+    )
+    print(
+        "[Startup] Environment OSTIR_BIN: {}".format(os.environ.get("OSTIR_BIN", "<unset>")),
+        file=sys.stderr,
+        flush=True,
+    )
+    print(
+        "[Startup] Environment CONDA_PREFIX: {}".format(os.environ.get("CONDA_PREFIX", "<unset>")),
+        file=sys.stderr,
+        flush=True,
+    )
+    print(
+        "[Startup] Environment CONDA_ENV_DIR: {}".format(os.environ.get("CONDA_ENV_DIR", "<unset>")),
+        file=sys.stderr,
+        flush=True,
+    )
+    print(
+        "[Startup] Environment RBS_CAL_CONDA_ENV: {}".format(os.environ.get("RBS_CAL_CONDA_ENV", "<unset>")),
+        file=sys.stderr,
+        flush=True,
+    )
+    print(
+        "[Startup] Environment RBS_CAL_VENV: {}".format(os.environ.get("RBS_CAL_VENV", "<unset>")),
+        file=sys.stderr,
+        flush=True,
+    )
+    print(
+        "[Startup] PATH preview: {}".format(" | ".join(_path_prefix_values(os.environ.get("PATH", "")))),
+        file=sys.stderr,
+        flush=True,
+    )
+    print(
+        "[Startup] ViennaRNA candidate dirs (limit 20):",
+        file=sys.stderr,
+        flush=True,
+    )
+    for index, directory in enumerate(_shorten_list([str(p) for p in candidate_dirs], 20), start=1):
+        print(f"  [{index:02d}] {directory}", file=sys.stderr, flush=True)
+
+    module_status = "ok" if _has_vienna_module() else "missing RNA module"
+    print(f"[Startup] ViennaRNA Python module: {module_status}", file=sys.stderr, flush=True)
+    for binary, resolved in _command_locations(VIENNARNA_BINARIES).items():
+        print(f"[Startup] ViennaRNA command on PATH: {binary} -> {resolved}", file=sys.stderr, flush=True)
+
+
 def _normalize_command_names(names: Tuple[str, ...]) -> List[str]:
     normalized: List[str] = []
     seen = set()
@@ -154,7 +230,7 @@ def _has_vienna_module() -> bool:
     return True
 
 
-def _ensure_viennarna_in_path() -> List[str]:
+def _ensure_viennarna_in_path(candidate_dirs: Optional[List[Path]] = None) -> List[str]:
     missing = _missing_viennarna_bins()
     if not missing:
         return []
@@ -164,7 +240,11 @@ def _ensure_viennarna_in_path() -> List[str]:
         for p in os.environ.get("PATH", "").split(os.pathsep)
         if p.strip()
     }
-    for base in _candidate_viennarna_dirs():
+    if candidate_dirs is None:
+        candidate_dirs = _candidate_viennarna_dirs()
+
+    added_dirs: List[str] = []
+    for base in candidate_dirs:
         for candidate_dir in (base, base / "bin"):
             if not candidate_dir.is_dir():
                 continue
@@ -172,7 +252,16 @@ def _ensure_viennarna_in_path() -> List[str]:
             if candidate in current_parts:
                 continue
             os.environ["PATH"] = candidate + os.pathsep + os.environ.get("PATH", "")
+            added_dirs.append(candidate)
             current_parts.add(candidate)
+
+    if added_dirs:
+        sample = _shorten_list(added_dirs, 12)
+        print(
+            "[Startup] Added PATH candidates for ViennaRNA scan: {}".format(" | ".join(sample)),
+            file=sys.stderr,
+            flush=True,
+        )
 
     missing = _missing_viennarna_bins()
     return missing
@@ -199,14 +288,29 @@ def _check_viennarna_dependencies() -> None:
     if _VIENNARNA_READY is True:
         return
 
-    missing = _ensure_viennarna_in_path()
+    candidate_dirs = _candidate_viennarna_dirs()
+    _log_viennarna_startup_context(candidate_dirs)
+
+    missing = _ensure_viennarna_in_path(candidate_dirs)
     if not missing:
+        for binary, resolved in _command_locations(VIENNARNA_BINARIES).items():
+            print(
+                f"[Startup] ViennaRNA command available: {binary} -> {resolved}",
+                file=sys.stderr,
+                flush=True,
+            )
         _VIENNARNA_READY = True
         return
 
     _VIENNARNA_READY = False
     module_status = "ok" if _has_vienna_module() else "missing RNA module"
     hint = _vienna_dependency_hint()
+    for binary, resolved in _command_locations(VIENNARNA_BINARIES).items():
+        print(
+            f"[Startup] ViennaRNA command still missing or unresolved: {binary} -> {resolved}",
+            file=sys.stderr,
+            flush=True,
+        )
     raise RuntimeError(
         "ViennaRNA command dependencies are missing in PATH. "
         f"Missing: {', '.join(missing)}. "
