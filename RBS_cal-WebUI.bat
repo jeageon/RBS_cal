@@ -666,6 +666,14 @@ if not defined OPEN_URL exit /b 1
 
 echo [Browser] trying to open: %OPEN_URL%
 
+if exist "%WINDIR%\System32\rundll32.exe" (
+  "%WINDIR%\System32\rundll32.exe" url.dll,FileProtocolHandler "%OPEN_URL%" >nul 2>&1
+  if "%errorlevel%"=="0" (
+    echo [Browser] opened via rundll32 URL handler.
+    exit /b 0
+  )
+)
+
 where explorer 2>nul | findstr "." >nul
 if "%errorlevel%"=="0" (
   explorer "%OPEN_URL%" >nul 2>&1
