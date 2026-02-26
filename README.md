@@ -58,6 +58,31 @@ If you ship bundled ViennaRNA runtime files with this repository:
 - put `RNAfold`, `RNAsubopt`, `RNAeval` into `bin\`.
 - The launcher checks `bin\` and `libs\` first, then tries conda/PyPI fallback.
 
+### Windows 배포용 바이너리 번들링 (권장)
+릴리즈 압축본에 실행 파일을 같이 넣으려면, 프로젝트 루트에 `bin` 폴더를 만들고 다음 파일을 그대로 넣으면 됩니다.
+
+1. `RNAfold.exe`
+2. `RNAsubopt.exe`
+3. `RNAeval.exe`
+
+동봉 시 `bin`은 자동으로 PATH 우선순위 상단에 추가되며, 배치 파일이 가장 먼저 `bin`의 바이너리를 사용합니다.
+
+릴리즈 ZIP 생성 예시(현재 저장소 기준):
+```bash
+cd /Users/jg/Documents/RBS_cal
+mkdir -p dist
+zip -r "dist/RBS_cal-Windows-bundle.zip" \
+  RBS_cal-WebUI.bat app.py requirements.txt templates README.md \
+  bin libs
+```
+
+또는 단순하게 현재 폴더 전체를 압축하되, `.venv`/`.rbs_cal_web.log`/`.DS_Store`만 제외하면 됩니다.
+
+주의:
+- `bin` 내부 바이너리는 라이선스/배포 조건을 확인한 뒤 넣어주세요.
+- 바이너리 용량이 크다면 GitHub 릴리즈 업로드 용량 정책(일반적으로 2GB)을 확인하세요.
+- 기존처럼 별도 설치 환경에서 동작시키려면 `bin`을 비워두고 동작합니다.
+
 The launcher logs each check as:
 - `[FOUND] RNAfold` / `[MISSING] RNAfold`
 

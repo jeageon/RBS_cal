@@ -364,6 +364,26 @@ if not exist "%LOCAL_VIENNA_BIN_DIR%\RNAfold.exe" if not exist "%LOCAL_VIENNA_BI
     if not exist "%LOCAL_VIENNA_BIN_DIR%\RNAeval.exe" if not exist "%LOCAL_VIENNA_BIN_DIR%\RNAeval" exit /b 0
   )
 )
+set "VLB_RNAFOLD=0"
+set "VLB_RNASUBOPT=0"
+set "VLB_RNaeval=0"
+if exist "%LOCAL_VIENNA_BIN_DIR%\RNAfold.exe" set "VLB_RNAFOLD=1"
+if exist "%LOCAL_VIENNA_BIN_DIR%\RNAfold" set "VLB_RNAFOLD=1"
+if exist "%LOCAL_VIENNA_BIN_DIR%\RNAsubopt.exe" set "VLB_RNASUBOPT=1"
+if exist "%LOCAL_VIENNA_BIN_DIR%\RNAsubopt" set "VLB_RNASUBOPT=1"
+if exist "%LOCAL_VIENNA_BIN_DIR%\RNAeval.exe" set "VLB_RNaeval=1"
+if exist "%LOCAL_VIENNA_BIN_DIR%\RNAeval" set "VLB_RNaeval=1"
+set "VLB_SUM=0"
+set /a VLB_SUM=%VLB_RNAFOLD%+%VLB_RNASUBOPT%+%VLB_RNaeval%
+if "%VLB_SUM%"=="3" (
+  echo [ViennaRNA] local bundle complete: 3/3 binaries present in %LOCAL_VIENNA_BIN_DIR%
+) else (
+  echo [ViennaRNA] partial local bundle: %VLB_SUM%/3 binaries present in %LOCAL_VIENNA_BIN_DIR%
+  echo [ViennaRNA] Missing:
+  if "%VLB_RNAFOLD%"=="0" echo [MISSING] RNAfold
+  if "%VLB_RNASUBOPT%"=="0" echo [MISSING] RNAsubopt
+  if "%VLB_RNaeval%"=="0" echo [MISSING] RNAeval
+)
 set "PATH=%LOCAL_VIENNA_BIN_DIR%;!PATH!"
 echo Added local ViennaRNA binary directory: %LOCAL_VIENNA_BIN_DIR%
 exit /b 0
