@@ -51,6 +51,7 @@ goto :runtime_path_venv
 :runtime_path_conda
 set "CONDA_PREFIX=%CONDA_ENV_DIR%"
 set "RBS_CAL_CONDA_ENV=%CONDA_ENV_DIR%"
+set "RBS_CAL_VENV=%VENV_DIR%"
 if exist "%CONDA_ENV_DIR%\Scripts" set "PATH=%CONDA_ENV_DIR%\Scripts;!PATH!"
 if exist "%CONDA_ENV_DIR%\Library\bin" set "PATH=%CONDA_ENV_DIR%\Library\bin;!PATH!"
 if exist "%CONDA_ENV_DIR%\bin" set "PATH=%CONDA_ENV_DIR%\bin;!PATH!"
@@ -59,7 +60,11 @@ call :log "[RUNTIME] conda prefix env var: %CONDA_PREFIX%"
 goto :runtime_path_done
 
 :runtime_path_venv
+set "RBS_CAL_VENV=%VENV_DIR%"
 if exist "%VENV_DIR%\Scripts" set "PATH=%VENV_DIR%\Scripts;!PATH!"
+if defined CONDA_ENV_DIR if exist "%CONDA_ENV_DIR%\Scripts" set "PATH=%CONDA_ENV_DIR%\Scripts;!PATH!"
+if defined CONDA_ENV_DIR if exist "%CONDA_ENV_DIR%\Library\bin" set "PATH=%CONDA_ENV_DIR%\Library\bin;!PATH!"
+if defined CONDA_ENV_DIR if exist "%CONDA_ENV_DIR%\bin" set "PATH=%CONDA_ENV_DIR%\bin;!PATH!"
 call :log "[RUNTIME] using venv: %VENV_DIR%"
 goto :runtime_path_done
 

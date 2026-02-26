@@ -192,10 +192,24 @@ def _candidate_viennarna_dirs() -> List[Path]:
                     root / "bin",
                     root.parent / "bin",
                     root.parent / "Scripts",
+                    root.parent / "Scripts" / "bin",
                 ]
             )
     except Exception:
         pass
+
+    for env_var in ("CONDA_PREFIX", "CONDA_ENV_DIR", "RBS_CAL_CONDA_ENV", "RBS_CAL_VENV"):
+        env_dir = Path(os.environ.get(env_var, ""))
+        if not str(env_dir):
+            continue
+        candidates.extend(
+            [
+                env_dir,
+                env_dir / "bin",
+                env_dir / "Scripts",
+                env_dir / "Library" / "bin",
+            ]
+        )
 
     uniq: List[Path] = []
     seen = set()
