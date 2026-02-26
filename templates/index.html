@@ -990,6 +990,7 @@
       const designRestartList = document.getElementById('designRestartList');
 
       let lastRows = [];
+      const TASK_POLL_INTERVAL_MS = 1200;
 
       const modeRadios = document.querySelectorAll('input[name="inputMode"]');
 
@@ -1273,7 +1274,7 @@
           }
 
           if (status === 'running' || status === 'queued') {
-            return new Promise((resolve) => setTimeout(resolve, 700)).then(poll);
+            return new Promise((resolve) => setTimeout(resolve, TASK_POLL_INTERVAL_MS)).then(poll);
           }
           if (status === 'failed') {
             throw new Error(payload.error || 'Design task failed.');
@@ -1777,7 +1778,7 @@
         };
 
         try {
-          const response = await fetch('/run', {
+          const response = await fetch('/run?async=1', {
             method: 'POST',
             body: formData,
           });
@@ -1835,7 +1836,7 @@
         updateProgressBar(designProgressWrap, 0);
 
         try {
-          const response = await fetch('/design', {
+          const response = await fetch('/design?async=1', {
             method: 'POST',
             body: formData,
           });

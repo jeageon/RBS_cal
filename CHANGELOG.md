@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.1.06
+
+- Designer async 버그 수정:
+  - `POST /design` 요청에서 반환한 `task_id` 뒤 백그라운드 계산이 실제 시작되지 않던 문제를 수정.
+  - `_run_in_background`에서 worker `threading.Thread(...).start()`를 보강해 `/tasks/<task_id>` 상태가 정상적으로 `completed/failed`로 종료되도록 정합화.
+- `/run`/`/design` 쿼리 파라미터 `?async=1` 대응을 유지하고, 폴링 기반 결과 수신 경로와의 정합성을 고정.
+- `1.1.05`에서 보고된 “끝나지 않는 폴링” 이슈 대응.
+
 ## v1.1.05
 
 - macOS/직접 실행 UX 개선:

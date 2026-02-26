@@ -163,6 +163,9 @@ def _run_in_background(task_id: str, func: Callable[..., Dict[str, Any]], *args:
             error_text = str(exc) if RBS_DEBUG_ERROR else "Background task failed."
             _task_finish(task_id, None, error_text, debug_detail)
 
+    worker = threading.Thread(target=_runner, daemon=True, name=f"rbs-task-{task_id}")
+    worker.start()
+
 
 def _safe_ostir_result_to_text(result: Any) -> str:
     if result is None:
@@ -2242,7 +2245,14 @@ def run_estimate():
         print_seq = bool(request.form.get("printSequence"))
         print_asd = bool(request.form.get("printASD"))
 
-        prefer_async = _coerce_bool(request.form.get("async")) or _coerce_bool(request.form.get("asyncMode"))
+        async_requested = request.form.get("async")
+        if async_requested is None:
+            async_requested = request.args.get("async")
+        async_mode_requested = request.form.get("asyncMode")
+        if async_mode_requested is None:
+            async_mode_requested = request.args.get("asyncMode")
+
+        prefer_async = _coerce_bool(async_requested) or _coerce_bool(async_mode_requested)
         try:
             ostir_binary = get_ostir_binary()
         except RuntimeError as exc:
@@ -2358,8 +2368,15 @@ def run_estimate():
 
 @app.route("/design", methods=["POST"])
 def run_design():
-    use_async = _coerce_bool(request.form.get("async"))
-    async_mode_requested = _coerce_bool(request.form.get("asyncMode"))
+    async_requested = request.form.get("async")
+    if async_requested is None:
+        async_requested = request.args.get("async")
+    async_mode_requested = request.form.get("asyncMode")
+    if async_mode_requested is None:
+        async_mode_requested = request.args.get("asyncMode")
+
+    use_async = _coerce_bool(async_requested)
+    async_mode_requested = _coerce_bool(async_mode_requested)
     prefer_async = use_async or async_mode_requested
 
     try:
