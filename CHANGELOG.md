@@ -8,11 +8,10 @@
   - 환경 변수 `RBS_DESIGN_FULL_REFINEMENT_MULTIPLIER`로 재평가 배수를 제어 가능.
   - API 응답 `full_refinement`에 `requested_candidates`, `refinement_multiplier`를 포함해 실제 재평가 대상량을 명시.
 
-## 실행/검증 체크
-
-1. 긴 입력에서 `pre_length_input / cds_length_input`이 50 이상인 경우 트렁케이션 경고가 표시되는지 확인.
-2. truncation 시 `full_refinement.requested_candidates`와 `diagnostics.refinement.requested`가 기대치(`topN × multiplier`)로 산정되는지 확인.
-3. topN보다 큰 경우에도 full-length 재평가 대상이 상한(`topN × 2`)으로 제한되는지 확인.
+- 검증 체크:
+  1. 긴 입력에서 `pre_length_input / cds_length_input`이 50 이상인 경우 트렁케이션 경고가 표시되는지 확인.
+  2. truncation 시 `full_refinement.requested_candidates`와 `diagnostics.refinement.requested`가 기대치(`topN × multiplier`)로 산정되는지 확인.
+  3. topN보다 큰 경우에도 full-length 재평가 대상이 상한(`topN × 2`)으로 제한되는지 확인.
 
 ## v1.0.15
 
