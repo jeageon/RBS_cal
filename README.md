@@ -5,9 +5,9 @@ RBS expression estimation and RBS design web UI powered by OSTIR.
 ## Features
 - RBS Calculator: sequence/file input -> OSTIR prediction and table/graph output.
 - RBS Designer: target expression 기반 RBS 후보군 추천.
-- 입력 서열이 매우 길어도 처리 안정성을 위해 Pre-sequence는 RBS 인접 200 bp,
-  CDS는 start codon 기준으로 200 bp까지만 탐색에 사용되며,
-  상위 후보 topN개만 최종적으로 전체 길이 서열에서 재평가합니다.
+- 입력 서열이 매우 길어도 처리 안정성을 위해 Pre-sequence는 RBS 인접 50 bp,
+  CDS는 start codon 기준으로 50 bp까지만 탐색에 사용되며,
+  상위 후보 `topN × 2`개만 최종적으로 전체 길이 서열에서 재평가합니다.
 - Result export, command logging, and web visualization.
 
 ## Recommended environment
@@ -38,7 +38,7 @@ Windows launcher is included:
 Run this `.bat` file by double-clicking.
 
 Behavior:
-- 버전: `v1.1.02`
+- 버전: `v1.1.03`
 - 로컬 `.venv` 기반 실행입니다. (`.conda_venv` 자동 생성/실행은 사용하지 않음)
 - ViennaRNA는 우선순위로 다음을 사용합니다.
   1) `bin\` 폴더의 CLI (`RNAfold`, `RNAsubopt`, `RNAeval`, 확장자 `.exe` 포함)

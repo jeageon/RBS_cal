@@ -23,8 +23,9 @@ app.logger.setLevel(logging.INFO)
 OSTIR_BIN = os.environ.get("OSTIR_BIN", "ostir")
 RBS_DESIGN_ITERATION_DEFAULT = int(os.environ.get("RBS_DESIGN_ITERATIONS", "500"))
 RBS_DESIGN_CANDIDATES_DEFAULT = int(os.environ.get("RBS_DESIGN_TOP_CANDIDATES", "10"))
-RBS_DESIGN_PRESEQ_MAX_BP = 200
-RBS_DESIGN_CDS_MAX_BP = 200
+RBS_DESIGN_PRESEQ_MAX_BP = int(os.environ.get("RBS_DESIGN_PRESEQ_MAX_BP", "50"))
+RBS_DESIGN_CDS_MAX_BP = int(os.environ.get("RBS_DESIGN_CDS_MAX_BP", "50"))
+RBS_DESIGN_FULL_REFINEMENT_MULTIPLIER = max(1, int(os.environ.get("RBS_DESIGN_FULL_REFINEMENT_MULTIPLIER", "2")))
 
 DEFAULT_ASD = "ACCTCCTTA"
 START_CODONS = ("ATG", "GTG", "TTG")
@@ -1619,8 +1620,14 @@ def run_design():
         truncation_info["pre"]["truncated"] or truncation_info["cds"]["truncated"]
     )
     if do_full_refinement:
+        refinement_multiplier = max(1, RBS_DESIGN_FULL_REFINEMENT_MULTIPLIER)
+        refinement_limit = min(
+            len(candidates), top_n_i * refinement_multiplier
+        )
         refinement_summary = {
-            "requested": top_n_i,
+            "requested": refinement_limit,
+            "requested_top_n": top_n_i,
+            "multiplier": refinement_multiplier,
             "attempted": 0,
             "accepted": 0,
             "rejected": 0,
@@ -1629,7 +1636,7 @@ def run_design():
         refined_candidates: List[Dict[str, Any]] = []
         start_codon_expected = full_post_seq[:3].upper() if full_post_seq else post_seq[:3].upper()
 
-        for candidate in candidates:
+        for candidate in candidates[:refinement_limit]:
             if not candidate:
                 continue
             rbs_seq = candidate.get("rbs_sequence", "")
@@ -1724,7 +1731,10 @@ def run_design():
             "full_cds_len": len(full_post_seq),
             "analysis_pre_len": len(pre_seq),
             "analysis_cds_len": len(post_seq),
-            "requested_candidates": top_n_i,
+            "requested_candidates": refinement_limit
+            if do_full_refinement
+            else top_n_i,
+            "refinement_multiplier": max(1, RBS_DESIGN_FULL_REFINEMENT_MULTIPLIER),
         },
     }
     if ranked:
