@@ -1,4 +1,4 @@
-# RBS_cal v1.0.18
+# RBS_cal v1.0.20
 
 ## What changed
 - Windows launcher format hardening:
