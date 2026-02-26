@@ -72,8 +72,14 @@ def _candidate_viennarna_dirs() -> List[Path]:
     venv_dir = Path(__file__).resolve().parent
     python_dir = Path(sys.executable).resolve().parent
     python_root = python_dir.parent
+    repo_dir = venv_dir.resolve()
     base_prefix = Path(sys.base_prefix)
     candidates: List[Path] = [
+        repo_dir,
+        repo_dir / "bin",
+        repo_dir / "libs",
+        repo_dir / "libs" / "ViennaRNA",
+        repo_dir / "libs" / "ViennaRNA" / "bin",
         python_dir,
         python_root,
         python_root / "Scripts",
@@ -172,6 +178,22 @@ def _ensure_viennarna_in_path() -> List[str]:
     return missing
 
 
+def _vienna_dependency_hint() -> str:
+    if os.name == "nt":
+        return (
+            "Install ViennaRNA CLI into the same environment and ensure the bin dir is on PATH. "
+            "Example (conda): conda install -y -p <env> -c conda-forge -c bioconda viennarna. "
+            "For Windows conda env, <env>\\Library\\bin is typically required. "
+            "If bundled binaries are shipped with this package, place RNAfold, RNAsubopt, "
+            "RNAeval in a local `bin` directory."
+        )
+    return (
+        "Install ViennaRNA CLI (RNAfold, RNAsubopt, RNAeval) in the active environment. "
+        "Example (conda): conda install -y -c conda-forge -c bioconda viennarna. "
+        "Example (Homebrew): brew install viennarna."
+    )
+
+
 def _check_viennarna_dependencies() -> None:
     global _VIENNARNA_READY
     if _VIENNARNA_READY is True:
@@ -184,12 +206,13 @@ def _check_viennarna_dependencies() -> None:
 
     _VIENNARNA_READY = False
     module_status = "ok" if _has_vienna_module() else "missing RNA module"
+    hint = _vienna_dependency_hint()
     raise RuntimeError(
         "ViennaRNA command dependencies are missing in PATH. "
         f"Missing: {', '.join(missing)}. "
         "Expected: RNAfold, RNAsubopt, RNAeval. "
         f"Python RNA module status: {module_status}. "
-        "Install/add ViennaRNA bin directory to PATH (for example within this venv/site-packages/RNA/bin)."
+        f"{hint}"
     )
 
 
@@ -219,7 +242,9 @@ def _humanize_ostir_error(stderr: str, stdout: str, returncode: int) -> str:
         return (
             "OSTIR runtime dependency issue: ViennaRNA command-line binaries are not ready in PATH. "
             "Ensure RNAfold, RNAsubopt, RNAeval are installed and discoverable. "
-            + " ".join(locations)
+            + " ".join(locations) +
+            " " +
+            _vienna_dependency_hint()
         )
 
     return f"OSTIR failed (exit={returncode}): {text}"

@@ -10,7 +10,7 @@ RBS expression estimation and RBS design web UI powered by OSTIR.
 ## Recommended environment
 - Python 3.10+ (or newer)
 - `ostir` executable installed and accessible.
-- On Windows, `ostir` requires both the ViennaRNA Python module (`RNA`) and ViennaRNA CLI tools (`RNAfold`, `RNAsubopt`, `RNAeval`) in PATH.
+- ViennaRNA Python module (`RNA`) and ViennaRNA CLI tools (`RNAfold`, `RNAsubopt`, `RNAeval`) in PATH.
 
 ## Quick start (macOS)
 ```bash
@@ -35,10 +35,11 @@ Windows launcher is included:
 Run this `.bat` file by double-clicking.
 
 Behavior:
-- Uses existing `.venv\Scripts\python.exe` if present, otherwise creates `.venv` and installs dependencies.
+- `conda`가 감지되면 우선 프로젝트 폴더의 `.conda_venv`를 사용해 실행 환경을 구성합니다.
+- conda 모드에서는 `conda` 환경에 `python`, `ostir`, `ViennaRNA`를 설치하고, `Library\bin`을 PATH에 반영해 `RNAfold`, `RNAsubopt`, `RNAeval`를 자동으로 찾습니다.
+- conda가 없으면 기존 동작처럼 `.venv\Scripts\python.exe`를 사용하고, 없으면 생성 후 의존성 설치를 진행합니다.
 - Selects an available port in 8000~8010.
-- Starts Flask server in background.
-- Opens default browser to `http://127.0.0.1:8000` (or selected port).
+- Starts Flask server and opens default browser to `http://127.0.0.1:8000` (or selected port).
 - Writes logs to `.rbs_cal_web.log`.
 
 If OSTIR is not auto-discovered, set explicitly:
@@ -47,23 +48,24 @@ set OSTIR_BIN=C:\path\to\ostir.exe
 RBS_cal-WebUI.bat
 ```
 
-If startup returns `ModuleNotFoundError: No module named 'RNA'`, install ViennaRNA in the launcher venv:
+If startup logs show missing ViennaRNA CLI, check:
+- `where RNAfold`
+- `where RNAsubopt`
+- `where RNAeval`
+
+If you ship bundled ViennaRNA runtime files with this repository:
+- put `ViennaRNA-*.whl` into `libs\` (wheel bootstrap), and/or
+- put `RNAfold`, `RNAsubopt`, `RNAeval` into `bin\`.
+- The launcher checks `bin\` and `libs\` first, then tries conda/PyPI fallback.
+
+The launcher logs each check as:
+- `[FOUND] RNAfold` / `[MISSING] RNAfold`
+
+If CLI installation continues to fail in conda mode:
 ```bat
-%VENV_DIR%\Scripts\python.exe -m pip install ViennaRNA
+conda activate "%~dp0.conda_venv"
+conda install -c conda-forge -c bioconda viennarna
 ```
-
-If startup succeeds but `OSTIR` still fails with `ViennaRNA is not properly installed or in PATH`, make sure one of the following is true:
-- `where RNAfold` returns a valid path.
-- `where RNAsubopt` returns a valid path.
-- `where RNAeval` returns a valid path.
-- If missing, add the ViennaRNA bin folder to the launcher environment PATH (the bat file now tries:
-  `<VENV_DIR>\\Lib\\site-packages\\RNA\\bin`).
-
-또한 배치파일 실행 시 아래 진단 로그를 같이 확인할 수 있습니다.
-- `[FOUND] RNAfold` / `[MISSING] RNAfold` 형식으로 각 바이너리 존재 여부 출력
-- 누락이 있으면 바로 실패 사유를 표시합니다.
-
-If installation fails, use the ViennaRNA install method that matches your Windows environment (binary/conda path) and run the launcher again.
 
 ## Project structure
 ```text
