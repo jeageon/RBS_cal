@@ -17,6 +17,12 @@ set "PYTHON_ARGS="
 set "CONDA_EXE="
 set "RUNTIME_MODE=venv"
 set "OSTIR_BIN="
+set "FORCED_CONDA_ENV="
+set "FORCE_CONDA_RUNTIME=0"
+if defined RBS_CAL_CONDA_ENV set "FORCED_CONDA_ENV=%RBS_CAL_CONDA_ENV%"
+if defined OSTIR_CONDA_ENV if not defined FORCED_CONDA_ENV set "FORCED_CONDA_ENV=%OSTIR_CONDA_ENV%"
+if defined CONDA_ENV_PATH if not defined FORCED_CONDA_ENV set "FORCED_CONDA_ENV=%CONDA_ENV_PATH%"
+if defined FORCED_CONDA_ENV set "FORCE_CONDA_RUNTIME=1"
 
 if exist "%LOG_FILE%" del "%LOG_FILE%" >nul 2>&1
 
@@ -26,8 +32,18 @@ echo [RBS_cal] start
 echo %LOG_FILE%
 
 if not exist "%PROJECT_DIR%\app.py" goto :missing_app
+if "%FORCE_CONDA_RUNTIME%"=="1" if defined FORCED_CONDA_ENV call :log "[RUNTIME] user forced conda env: %FORCED_CONDA_ENV%"
 cd /d "%PROJECT_DIR%" >nul 2>&1
 if not "%errorlevel%"=="0" goto :fail
+
+if "%FORCE_CONDA_RUNTIME%"=="1" (
+  call :resolve_forced_conda_env
+  if not "%errorlevel%"=="0" goto :fail
+  set "CONDA_PREFIX=%CONDA_ENV_DIR%"
+  set "CONDA_ENV_DIR=%CONDA_ENV_DIR%"
+  set "RUNTIME_MODE=conda"
+  goto :runtime_path_conda
+)
 
 call :detect_conda
 if not defined CONDA_EXE goto :skip_conda
@@ -190,6 +206,8 @@ call :log "  RUNTIME_MODE=%RUNTIME_MODE%"
 call :log "  PROJECT_DIR=%PROJECT_DIR%"
 call :log "  VENV_DIR=%VENV_DIR%"
 call :log "  CONDA_ENV_DIR=%CONDA_ENV_DIR%"
+call :log "  FORCE_CONDA_RUNTIME=%FORCE_CONDA_RUNTIME%"
+call :log "  FORCED_CONDA_ENV=%FORCED_CONDA_ENV%"
 call :log "  CONDA_EXE=%CONDA_EXE%"
 call :log "  CONDA_PREFIX=%CONDA_PREFIX%"
 call :log "  PYTHON_ARGS=%PYTHON_ARGS%"
@@ -269,7 +287,32 @@ for %%P in (
 if defined CONDA_EXE exit /b 0
 exit /b 1
 
+:resolve_forced_conda_env
+if not defined FORCED_CONDA_ENV (
+  echo ERROR: forced conda env not set.
+  exit /b 1
+)
+for %%P in ("%FORCED_CONDA_ENV%") do set "CONDA_ENV_DIR=%%~fP"
+if not exist "%CONDA_ENV_DIR%" (
+  echo ERROR: user forced conda env does not exist: %FORCED_CONDA_ENV%
+  echo        resolved: %CONDA_ENV_DIR%
+  exit /b 1
+)
+if not exist "%CONDA_ENV_DIR%\python.exe" (
+  echo ERROR: user forced conda env is invalid (python.exe not found): %CONDA_ENV_DIR%
+  exit /b 1
+)
+if exist "%CONDA_ENV_DIR%\Scripts" set "PATH=%CONDA_ENV_DIR%\Scripts;!PATH!"
+if exist "%CONDA_ENV_DIR%\Library\bin" set "PATH=%CONDA_ENV_DIR%\Library\bin;!PATH!"
+if exist "%CONDA_ENV_DIR%\bin" set "PATH=%CONDA_ENV_DIR%\bin;!PATH!"
+set "PYTHON_EXE=%CONDA_ENV_DIR%\python.exe"
+exit /b 0
+
 :init_conda_runtime
+if "%FORCE_CONDA_RUNTIME%"=="1" (
+  if not exist "%CONDA_ENV_DIR%\python.exe" exit /b 1
+  exit /b 0
+)
 if not defined CONDA_EXE exit /b 1
 if not exist "%CONDA_ENV_DIR%\python.exe" goto :create_conda_runtime
 set "PYTHON_EXE=%CONDA_ENV_DIR%\python.exe"

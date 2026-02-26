@@ -53,6 +53,15 @@ If startup logs show missing ViennaRNA CLI, check:
 - `where RNAsubopt`
 - `where RNAeval`
 
+You can force the launcher to use one pre-existing Conda env instead of creating `.conda_venv`:
+```bat
+set "RBS_CAL_CONDA_ENV=C:\Users\...\envs\myenv"
+RBS_cal-WebUI.bat
+```
+Notes:
+- `python.exe` must exist in the forced env root (`<env>\\python.exe`).
+- `RNAfold`, `RNAsubopt`, `RNAeval` must be available in PATH (or inside conda env `Library\\bin`).
+
 If you ship bundled ViennaRNA runtime files with this repository:
 - put `ViennaRNA-*.whl` into `libs\` (wheel bootstrap), and/or
 - put `RNAfold`, `RNAsubopt`, `RNAeval` into `bin\`.
