@@ -230,6 +230,13 @@
         font-size: 14px;
       }
 
+      .status.warning {
+        border-style: solid;
+        border-color: rgba(217, 119, 6, 0.35);
+        background: #fffbeb;
+        color: #7c3d00;
+      }
+
       .progress-wrap {
         margin-top: 10px;
         width: 100%;
@@ -809,14 +816,14 @@
                 <label class="field-block">
                   <span class="field-line">
                     Pre-sequence (필수, RBS 앞쪽 고정 구간)
-                    <span class="field-info" title="ATG 이전 upstream 서열을 입력하세요. 설계된 RBS는 이 구간 뒤에 넣어집니다.">ⓘ</span>
+                    <span class="field-info" title="ATG 이전 upstream 서열을 입력하세요. 입력이 200 bp를 넘으면 RBS 인접 200 bp만 사용됩니다.">ⓘ</span>
                   </span>
                   <textarea id="preSequence" name="preSequence" placeholder="예: TTGACA...GGAGG..." required></textarea>
                 </label>
                 <label class="field-block">
                   <span class="field-line">
                     CDS (필수, Start codon 포함)
-                    <span class="field-info" title="전사 시작부터 번역될 CDS를 붙여넣으세요. ATG/GTG/TTG로 시작해야 합니다.">ⓘ</span>
+                    <span class="field-info" title="전사 시작부터 번역될 CDS를 붙여넣으세요. ATG/GTG/TTG로 시작해야 하며, 입력이 200 bp를 넘으면 시작 코돈부터 200 bp만 사용됩니다.">ⓘ</span>
                   </span>
                   <textarea id="postSequence" name="postSequence" placeholder="예: ATGAAA... (start codon으로 시작)" required></textarea>
                 </label>
@@ -895,6 +902,7 @@
                 </button>
               </form>
               <div id="designStatus" class="status muted">Ready</div>
+              <div id="designWarning" class="status warning hidden" style="margin-top: 8px; white-space: pre-wrap"></div>
             </div>
           </section>
 
@@ -965,6 +973,7 @@
 
       const designForm = document.getElementById('rbs-design-form');
       const designStatus = document.getElementById('designStatus');
+      const designWarning = document.getElementById('designWarning');
       const designSummary = document.getElementById('designResultSummary');
       const designSpinner = document.getElementById('designSpinner');
       const designRunBtn = document.getElementById('designRunBtn');
@@ -1743,6 +1752,8 @@
 
         designStatus.textContent = 'Running RBS designer...';
         designStatus.style.color = '#17315a';
+        designWarning.classList.add('hidden');
+        designWarning.textContent = '';
         designProgressWrap.style.display = 'block';
         designRunBtn.disabled = true;
         designSpinner.style.opacity = '1';
@@ -1766,6 +1777,30 @@
           designSummary.style.color = '#17315a';
           designStatus.textContent = '디자인 완료';
 
+          const warnings = Array.isArray(data.warnings)
+            ? data.warnings.filter((item) => typeof item === 'string' && item.trim())
+            : [];
+          const refineInfo = data.full_refinement || {};
+          const refineMessage = (refineInfo.enabled || false)
+            ? `Full-length reevaluation: enabled for top ${refineInfo.requested_candidates || 0} candidates. ${refineInfo.accepted || 0}/${refineInfo.attempted || 0} candidates passed strict validation.`
+            : 'Full-length reevaluation: skipped (analysis window == input window).';
+
+          const messages = [];
+          if (warnings.length) {
+            messages.push(warnings.join('\n'));
+          }
+          if (refineInfo) {
+            messages.push(refineMessage);
+          }
+
+          if (messages.length) {
+            designWarning.textContent = messages.join('\n');
+            designWarning.classList.remove('hidden');
+          } else {
+            designWarning.classList.add('hidden');
+            designWarning.textContent = '';
+          }
+
           const csv = toCSV(data.columns, data.candidates);
           const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
           const url = URL.createObjectURL(blob);
@@ -1776,6 +1811,8 @@
           designSummary.textContent = 'No output yet';
           designSummary.style.color = '#17315a';
           designDownloadLink.classList.add('hidden');
+          designWarning.classList.add('hidden');
+          designWarning.textContent = '';
           designStatus.textContent = `Error: ${error.message}`;
           designStatus.style.color = '#a12525';
           renderDesignTable([], []);

@@ -23,6 +23,8 @@ app.logger.setLevel(logging.INFO)
 OSTIR_BIN = os.environ.get("OSTIR_BIN", "ostir")
 RBS_DESIGN_ITERATION_DEFAULT = int(os.environ.get("RBS_DESIGN_ITERATIONS", "500"))
 RBS_DESIGN_CANDIDATES_DEFAULT = int(os.environ.get("RBS_DESIGN_TOP_CANDIDATES", "10"))
+RBS_DESIGN_PRESEQ_MAX_BP = 200
+RBS_DESIGN_CDS_MAX_BP = 200
 
 DEFAULT_ASD = "ACCTCCTTA"
 START_CODONS = ("ATG", "GTG", "TTG")
@@ -524,6 +526,142 @@ def _format_sequence(raw: str, keep_rna: bool = False) -> str:
     if not keep_rna:
         return value.replace("U", "T")
     return value
+
+
+def _truncate_design_sequences(
+    pre_seq: str, post_seq: str
+) -> Tuple[str, str, List[str], Dict[str, Any]]:
+    pre_original_len = len(pre_seq)
+    post_original_len = len(post_seq)
+
+    warnings: List[str] = []
+    truncation_info: Dict[str, Any] = {
+        "pre": {
+            "input_length": pre_original_len,
+            "used_length": min(pre_original_len, RBS_DESIGN_PRESEQ_MAX_BP),
+            "max_length": RBS_DESIGN_PRESEQ_MAX_BP,
+            "truncated": pre_original_len > RBS_DESIGN_PRESEQ_MAX_BP,
+        },
+        "cds": {
+            "input_length": post_original_len,
+            "used_length": min(post_original_len, RBS_DESIGN_CDS_MAX_BP),
+            "max_length": RBS_DESIGN_CDS_MAX_BP,
+            "truncated": post_original_len > RBS_DESIGN_CDS_MAX_BP,
+        },
+    }
+
+    if pre_original_len > RBS_DESIGN_PRESEQ_MAX_BP:
+        pre_seq = pre_seq[-RBS_DESIGN_PRESEQ_MAX_BP :]
+        warnings.append(
+            f"Pre-sequence was longer than {RBS_DESIGN_PRESEQ_MAX_BP} bp. "
+            f"Only the nearest {RBS_DESIGN_PRESEQ_MAX_BP} bp to RBS was kept "
+            f"({pre_original_len} -> {len(pre_seq)})."
+        )
+
+    if post_original_len > RBS_DESIGN_CDS_MAX_BP:
+        post_seq = post_seq[:RBS_DESIGN_CDS_MAX_BP]
+        warnings.append(
+            f"CDS sequence was longer than {RBS_DESIGN_CDS_MAX_BP} bp. "
+            f"Only the first {RBS_DESIGN_CDS_MAX_BP} bp from the start codon was kept "
+            f"({post_original_len} -> {len(post_seq)})."
+        )
+
+    return pre_seq, post_seq, warnings, truncation_info
+
+
+def _evaluate_design_candidate_full_sequence(
+    pre_seq: str,
+    post_seq: str,
+    rbs_seq: str,
+    target_log: float,
+    ostir_binary: str,
+    asd: str = DEFAULT_ASD,
+    threads: int = 1,
+    start_codon: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    if not rbs_seq:
+        return None
+
+    expected_start = len(pre_seq) + len(rbs_seq) + 1
+    expected_start_codon = (start_codon or post_seq[:3]).upper()
+    full_seq = pre_seq + rbs_seq + post_seq
+
+    row = run_ostir_for_start_position(
+        sequence=full_seq,
+        ostir_binary=ostir_binary,
+        expected_start=expected_start,
+        asd=asd,
+        threads=threads,
+        post_seq=post_seq,
+    )
+
+    if not row:
+        return {
+            "rbs_sequence": rbs_seq,
+            "full_sequence": full_seq,
+            "start_position": None,
+            "start_codon": expected_start_codon,
+            "predicted_expression": 0.0,
+            "error": float("inf"),
+            "row": {},
+            "rejected": True,
+            "reject_reason": "no_valid_ostir_row",
+        }
+
+    expr = _coerce_float(row.get("expression"))
+    if expr is None or expr <= 0:
+        return {
+            "rbs_sequence": rbs_seq,
+            "full_sequence": full_seq,
+            "start_position": _coerce_float(row.get("start_position")),
+            "start_codon": str(row.get("start_codon", "")).upper() or expected_start_codon,
+            "predicted_expression": 0.0,
+            "error": float("inf"),
+            "row": row,
+            "rejected": True,
+            "reject_reason": "non_positive_expression",
+        }
+
+    observed_codon = str(row.get("start_codon", "")).upper()
+    if observed_codon != expected_start_codon:
+        return {
+            "rbs_sequence": rbs_seq,
+            "full_sequence": full_seq,
+            "start_position": _coerce_float(row.get("start_position")),
+            "start_codon": observed_codon,
+            "predicted_expression": 0.0,
+            "error": float("inf"),
+            "row": row,
+            "rejected": True,
+            "reject_reason": "start_codon_mismatch",
+        }
+
+    observed_position = _coerce_float(row.get("start_position"))
+    if observed_position is None or int(observed_position) != expected_start:
+        return {
+            "rbs_sequence": rbs_seq,
+            "full_sequence": full_seq,
+            "start_position": observed_position,
+            "start_codon": observed_codon,
+            "predicted_expression": 0.0,
+            "error": float("inf"),
+            "row": row,
+            "rejected": True,
+            "reject_reason": "start_position_mismatch",
+        }
+
+    predicted_expr = max(expr, 1e-12)
+    err = abs(math.log10(predicted_expr) - target_log)
+    return {
+        "rbs_sequence": rbs_seq,
+        "full_sequence": full_seq,
+        "start_position": expected_start,
+        "start_codon": expected_start_codon,
+        "predicted_expression": predicted_expr,
+        "error": err,
+        "row": row,
+        "rejected": False,
+    }
 
 
 def run_ostir_row_for_sequence(
@@ -1409,8 +1547,12 @@ def run_design():
     top_n = request.form.get("topCandidates", str(RBS_DESIGN_CANDIDATES_DEFAULT)).strip()
     random_seed = request.form.get("randomSeed", DESIGN_RANDOM_SEED).strip()
 
-    pre_seq = _format_sequence(pre_seq)
-    post_seq = _format_sequence(post_seq)
+    full_pre_seq = _format_sequence(pre_seq)
+    full_post_seq = _format_sequence(post_seq)
+    pre_seq, post_seq, truncation_warnings, truncation_info = _truncate_design_sequences(
+        full_pre_seq,
+        full_post_seq,
+    )
     if not pre_seq:
         return jsonify({"ok": False, "error": "Pre-sequence input is required"}), 400
     if len(post_seq) < 3:
@@ -1454,7 +1596,7 @@ def run_design():
         return jsonify({"ok": False, "error": str(exc)}), 500
 
     try:
-        candidates, best, design_diagnostics = design_rbs_candidates(
+        candidates, _, design_diagnostics = design_rbs_candidates(
             pre_seq=pre_seq,
             post_seq=post_seq,
             target_expression=target_expression,
@@ -1471,6 +1613,62 @@ def run_design():
         return jsonify({"ok": False, "error": str(exc)}), 400
     except RuntimeError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 500
+
+    target_log = math.log10(target_expression)
+    do_full_refinement = (
+        truncation_info["pre"]["truncated"] or truncation_info["cds"]["truncated"]
+    )
+    if do_full_refinement:
+        refinement_summary = {
+            "requested": top_n_i,
+            "attempted": 0,
+            "accepted": 0,
+            "rejected": 0,
+        }
+
+        refined_candidates: List[Dict[str, Any]] = []
+        start_codon_expected = full_post_seq[:3].upper() if full_post_seq else post_seq[:3].upper()
+
+        for candidate in candidates:
+            if not candidate:
+                continue
+            rbs_seq = candidate.get("rbs_sequence", "")
+            if not rbs_seq:
+                continue
+
+            refinement_summary["attempted"] += 1
+            evaluated = _evaluate_design_candidate_full_sequence(
+                pre_seq=full_pre_seq,
+                post_seq=full_post_seq,
+                rbs_seq=rbs_seq,
+                target_log=target_log,
+                ostir_binary=ostir_binary,
+                asd=asd,
+                threads=threads_count,
+                start_codon=start_codon_expected,
+            )
+            if evaluated is None:
+                continue
+
+            if evaluated.get("rejected"):
+                refinement_summary["rejected"] += 1
+                continue
+
+            refinement_summary["accepted"] += 1
+            refined_candidates.append(evaluated)
+
+        candidates = sorted(
+            refined_candidates,
+            key=lambda item: (item["error"], -item["predicted_expression"]),
+        )
+        design_diagnostics["refinement"] = refinement_summary
+    else:
+        design_diagnostics["refinement"] = {
+            "requested": top_n_i,
+            "attempted": 0,
+            "accepted": len(candidates),
+            "rejected": 0,
+        }
 
     ranked = []
     for index, candidate in enumerate(candidates, start=1):
@@ -1509,14 +1707,28 @@ def run_design():
         "ok": True,
         "target_expression": target_expression,
         "iterations": iterations_i,
+        "pre_length_input": truncation_info.get("pre", {}).get("input_length", len(pre_seq)),
+        "cds_length_input": truncation_info.get("cds", {}).get("input_length", len(post_seq)),
         "pre_length": len(pre_seq),
         "cds_length": len(post_seq),
+        "full_length_pre": len(full_pre_seq),
+        "full_length_cds": len(full_post_seq),
         "candidates": ranked,
         "count": len(ranked),
         "diagnostics": design_diagnostics,
+        "truncation": truncation_info,
+        "warnings": truncation_warnings,
+        "full_refinement": {
+            "enabled": do_full_refinement,
+            "full_pre_len": len(full_pre_seq),
+            "full_cds_len": len(full_post_seq),
+            "analysis_pre_len": len(pre_seq),
+            "analysis_cds_len": len(post_seq),
+            "requested_candidates": top_n_i,
+        },
     }
-    if best:
-        response["best"] = ranked[0] if ranked else None
+    if ranked:
+        response["best"] = ranked[0]
 
     return jsonify(response)
 

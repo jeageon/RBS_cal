@@ -1,10 +1,13 @@
-# RBS_cal
+# RBS_cal (v1.1.02)
 
 RBS expression estimation and RBS design web UI powered by OSTIR.
 
 ## Features
 - RBS Calculator: sequence/file input -> OSTIR prediction and table/graph output.
 - RBS Designer: target expression 기반 RBS 후보군 추천.
+- 입력 서열이 매우 길어도 처리 안정성을 위해 Pre-sequence는 RBS 인접 200 bp,
+  CDS는 start codon 기준으로 200 bp까지만 탐색에 사용되며,
+  상위 후보 topN개만 최종적으로 전체 길이 서열에서 재평가합니다.
 - Result export, command logging, and web visualization.
 
 ## Recommended environment
@@ -35,12 +38,34 @@ Windows launcher is included:
 Run this `.bat` file by double-clicking.
 
 Behavior:
-- `conda`가 감지되면 우선 프로젝트 폴더의 `.conda_venv`를 사용해 실행 환경을 구성합니다.
-- conda 모드에서는 `conda` 환경에 `python`, `ostir`, `ViennaRNA`를 설치하고, `Library\bin`을 PATH에 반영해 `RNAfold`, `RNAsubopt`, `RNAeval`를 자동으로 찾습니다.
-- conda가 없으면 기존 동작처럼 `.venv\Scripts\python.exe`를 사용하고, 없으면 생성 후 의존성 설치를 진행합니다.
-- Selects an available port in 8000~8010.
-- Starts Flask server and opens default browser to `http://127.0.0.1:8000` (or selected port).
-- Writes logs to `.rbs_cal_web.log`.
+- 버전: `v1.1.02`
+- 로컬 `.venv` 기반 실행입니다. (`.conda_venv` 자동 생성/실행은 사용하지 않음)
+- ViennaRNA는 우선순위로 다음을 사용합니다.
+  1) `bin\` 폴더의 CLI (`RNAfold`, `RNAsubopt`, `RNAeval`, 확장자 `.exe` 포함)
+  2) `libs\` 폴더의 `ViennaRNA-*.whl` 자동 설치 및 모듈/CLI 검증
+  3) 기본 `requirements.txt` 의존성 설치
+- 8000~8010 범위에서 사용 가능한 포트를 찾아 자동으로 실행합니다.
+- 성공 시 기본 브라우저가 자동 오픈되며, URL은 `.rbs_cal_web.log` 또는 콘솔에 출력됩니다.
+- 실행 로그는 `.rbs_cal_web.log`에 남습니다.
+
+### ViennaRNA 로컬 번들 사용 가이드
+릴리즈의 핵심 규칙:
+1. 먼저 `bin\` 폴더에서 CLI 바이너리를 확인합니다.
+2. 없으면 `libs\ViennaRNA-*.whl`를 설치해 Python 모듈 및 CLI를 검증합니다.
+3. 검증 실패 시 실행을 중단하고 원인 메시지를 로그에 출력합니다.
+
+권장 구조(패키지에 포함):
+- `bin\RNAfold(.exe)`
+- `bin\RNAsubopt(.exe)`
+- `bin\RNAeval(.exe)`
+- 또는 `libs\ViennaRNA-*.whl` 1개 이상
+
+원클릭으로 wheel만 먼저 받아 두려면:
+```bat
+python -m pip download ViennaRNA>=2.6.4 -d libs --only-binary=:all:
+```
+
+> 참고: `requirements.txt`에는 `ViennaRNA>=2.6.4`가 남아 있습니다. 그러나 실행은 `bin\`/`libs` 우선 정책으로 통제합니다.
 
 If OSTIR is not auto-discovered, set explicitly:
 ```bat
@@ -53,19 +78,10 @@ If startup logs show missing ViennaRNA CLI, check:
 - `where RNAsubopt`
 - `where RNAeval`
 
-You can force the launcher to use one pre-existing Conda env instead of creating `.conda_venv`:
-```bat
-set "RBS_CAL_CONDA_ENV=C:\Users\...\envs\myenv"
-RBS_cal-WebUI.bat
-```
-Notes:
-- `python.exe` must exist in the forced env root (`<env>\\python.exe`).
-- `RNAfold`, `RNAsubopt`, `RNAeval` must be available in PATH (or inside conda env `Library\\bin`).
-
 If you ship bundled ViennaRNA runtime files with this repository:
 - put `ViennaRNA-*.whl` into `libs\` (wheel bootstrap), and/or
 - put `RNAfold`, `RNAsubopt`, `RNAeval` into `bin\`.
-- The launcher checks `bin\` and `libs\` first, then tries conda/PyPI fallback.
+- The launcher checks `bin\` and `libs\` first, then validates CLI availability and aborts on missing runtime.
 
 ### Windows 배포용 바이너리 번들링 (권장)
 릴리즈 압축본에 실행 파일을 같이 넣으려면, 프로젝트 루트에 `bin` 폴더를 만들고 다음 파일을 그대로 넣으면 됩니다.
@@ -95,12 +111,6 @@ zip -r "dist/RBS_cal-Windows-bundle.zip" \
 The launcher logs each check as:
 - `[FOUND] RNAfold` / `[MISSING] RNAfold`
 
-If CLI installation continues to fail in conda mode:
-```bat
-conda activate "%~dp0.conda_venv"
-conda install -c conda-forge -c bioconda viennarna
-```
-
 ## Project structure
 ```text
 .
@@ -119,3 +129,4 @@ conda install -c conda-forge -c bioconda viennarna
 ## Versioning and release
 - Tag naming: `vX.Y.Z`
 - Keep this repository as the source of record for release artifacts and installation scripts.
+- Consolidated release history is maintained in `CHANGELOG.md`.
