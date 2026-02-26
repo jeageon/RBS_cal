@@ -136,10 +136,11 @@ if not "%errorlevel%"=="0" goto :fail
 call :wait_for_server
 if not "%errorlevel%"=="0" goto :fail
 
-echo Open browser...
-start "" "%URL%"
-
 echo Server started on %URL%
+echo Use this URL: %URL%
+echo Open browser...
+call :open_webui_browser "%URL%"
+if not "%errorlevel%"=="0" echo NOTICE: Auto-open browser failed. Open URL manually from the line above.
 
 goto done
 
@@ -657,6 +658,27 @@ if exist "%CONDA_ENV_DIR%\Lib\site-packages\RNA\Scripts" echo   candidate: %COND
 if exist "%CONDA_ENV_DIR%\Lib\site-packages\RNA" echo   candidate: %CONDA_ENV_DIR%\Lib\site-packages\RNA
 if exist "%CONDA_ENV_DIR%\Lib\site-packages" echo   candidate: %CONDA_ENV_DIR%\Lib\site-packages
 exit /b 0
+
+:open_webui_browser
+set "OPEN_URL=%~1"
+if not defined OPEN_URL exit /b 1
+
+where powershell 2>nul | findstr "." >nul
+if "%errorlevel%"=="0" (
+  powershell -NoProfile -Command "Start-Process '%OPEN_URL%'" >nul 2>&1
+  if "%errorlevel%"=="0" (
+    exit /b 0
+  )
+)
+
+if exist "%PYTHON_EXE%" (
+  "%PYTHON_EXE%" -c "import webbrowser,sys; webbrowser.open(sys.argv[1])" "%OPEN_URL%" >nul 2>&1
+  if "%errorlevel%"=="0" exit /b 0
+)
+
+start "" "%OPEN_URL%"
+if "%errorlevel%"=="0" exit /b 0
+exit /b 1
 
 :log_runtime_path_prefix
 setlocal EnableDelayedExpansion
