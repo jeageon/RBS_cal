@@ -2428,9 +2428,36 @@ if __name__ == "__main__":
         print(f"Startup dependency check failed: {exc}", file=sys.stderr, flush=True)
         raise
 
+    host = os.environ.get("HOST", "127.0.0.1")
+    port = int(os.environ.get("PORT", "8000"))
+
+    if os.environ.get("RBS_AUTO_OPEN_BROWSER", "1").lower() not in {
+        "0", "false", "off", "no"
+    }:
+        try:
+            import webbrowser
+
+            def _open_ui():
+                try:
+                    webbrowser.open(f"http://{host}:{port}", new=2)
+                except Exception as exc:
+                    print(
+                        f"[webbrowser] Failed to open browser: {exc}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+
+            threading.Timer(1.2, _open_ui).start()
+        except Exception as exc:
+            print(
+                f"[webbrowser] Not available: {exc}",
+                file=sys.stderr,
+                flush=True,
+            )
+
     app.run(
-        host=os.environ.get("HOST", "127.0.0.1"),
-        port=int(os.environ.get("PORT", "8000")),
+        host=host,
+        port=port,
         debug=False,
         use_reloader=False,
     )
