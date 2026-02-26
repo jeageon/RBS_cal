@@ -138,6 +138,7 @@ if not "%errorlevel%"=="0" goto :fail
 
 echo Server started on %URL%
 echo Use this URL: %URL%
+echo If browser does not open automatically, copy the URL and open it manually.
 echo Open browser...
 call :open_webui_browser "%URL%"
 if not "%errorlevel%"=="0" echo NOTICE: Auto-open browser failed. Open URL manually from the line above.
@@ -663,21 +664,40 @@ exit /b 0
 set "OPEN_URL=%~1"
 if not defined OPEN_URL exit /b 1
 
+echo [Browser] trying to open: %OPEN_URL%
+
+where explorer 2>nul | findstr "." >nul
+if "%errorlevel%"=="0" (
+  explorer "%OPEN_URL%" >nul 2>&1
+  if "%errorlevel%"=="0" (
+    echo [Browser] opened via explorer.
+    exit /b 0
+  )
+)
+
 where powershell 2>nul | findstr "." >nul
 if "%errorlevel%"=="0" (
   powershell -NoProfile -Command "Start-Process '%OPEN_URL%'" >nul 2>&1
   if "%errorlevel%"=="0" (
+    echo [Browser] opened via PowerShell.
     exit /b 0
   )
 )
 
 if exist "%PYTHON_EXE%" (
   "%PYTHON_EXE%" -c "import webbrowser,sys; webbrowser.open(sys.argv[1])" "%OPEN_URL%" >nul 2>&1
-  if "%errorlevel%"=="0" exit /b 0
+  if "%errorlevel%"=="0" (
+    echo [Browser] opened via Python webbrowser.
+    exit /b 0
+  )
 )
 
 start "" "%OPEN_URL%"
-if "%errorlevel%"=="0" exit /b 0
+if "%errorlevel%"=="0" (
+  echo [Browser] opened via CMD start.
+  exit /b 0
+)
+echo [Browser] auto-open failed for: %OPEN_URL%
 exit /b 1
 
 :log_runtime_path_prefix
