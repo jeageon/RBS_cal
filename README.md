@@ -25,14 +25,16 @@ python -m pip install -r requirements.txt
 python app.py
 ```
 Open `http://127.0.0.1:8000`.
+`plasmid_designer` 탭까지 사용하려면 위 단일 `requirements.txt` 설치로 `Bio`/`matplotlib`/`dna-features-viewer`까지 함께 설치됩니다.
 
 ## 플라스미드 디자이너 통합 패키지 사용
 - 기본 동작은 현재 경로의 `plasmid_designer/` 폴더를 우선 탐색합니다.
 - 동일 경로에 `plasmid_web_ui.py`가 있고 Flask 앱이 있으면 탭이 자동으로 활성화됩니다.
+- 플러그인 의존성은 기본 `requirements.txt`와 함께 설치됩니다. (또는 `plasmid_designer/requirements.txt`)
 - 별도 위치를 강제로 지정하려면 실행 시 환경변수로 설정합니다:
 ```bash
 export PLASMID_DESIGNER_PROJECT_DIR=/원하는/경로/plasmid_designer
-```
+``` 
 
 ## One-click launch (macOS desktop shortcut)
 Use the mac shortcut script:

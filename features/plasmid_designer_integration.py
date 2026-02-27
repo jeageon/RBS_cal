@@ -9,6 +9,13 @@ from flask import Flask
 from werkzeug.middleware.dispatcher import DispatcherMiddleware
 
 
+_MODULE_TO_PIP = {
+    "Bio": "biopython",
+    "dna_features_viewer": "dna-features-viewer",
+    "matplotlib": "matplotlib",
+}
+
+
 def _normalize_mount_path(mount_path: str) -> str:
     normalized = (mount_path or "/plasmid_designer").rstrip("/") or "/plasmid_designer"
     if not normalized.startswith("/"):
@@ -40,6 +47,18 @@ def _load_plasmid_designer_app(project_dir: Path) -> Tuple[Optional[Flask], Opti
         if not isinstance(app, Flask):
             return None, "plasmid_web_ui.py did not expose a Flask app object"
         return app, None
+    except ModuleNotFoundError as exc:
+        missing_module = exc.name or "unknown"
+        pip_hint = _MODULE_TO_PIP.get(missing_module, str(missing_module))
+        requirement_file = project_dir / "requirements.txt"
+        if requirement_file.exists():
+            req_hint = f" Install dependencies with: pip install -r {requirement_file}"
+        else:
+            req_hint = f" Install package: pip install {pip_hint}"
+        return None, (
+            f"Failed to import plasmid_web_ui.py: Missing module '{missing_module}'. "
+            f"Install with: pip install {pip_hint}.{req_hint}"
+        )
     except Exception as exc:
         return None, f"Failed to import plasmid_web_ui.py: {exc}"
     finally:

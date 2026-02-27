@@ -969,6 +969,8 @@
                 {% if plasmid_designer_project_dir %}<br />조회 경로: {{ plasmid_designer_project_dir }}{% endif %}
                 {% if plasmid_designer_error %}<br />{{ plasmid_designer_error }}{% endif %}
                 <br />환경변수 PLASMID_DESIGNER_PROJECT_DIR 또는 프로젝트 내 `plasmid_designer/` 폴더로 연결해 주세요.
+                <br />탭 모듈의 필수 패키지(`Bio`, `matplotlib`, `dna-features-viewer`)가 누락되면
+                `plasmid_designer/requirements.txt` 또는 `requirements.txt`로 설치해 주세요.
               </div>
             {% endif %}
           </div>

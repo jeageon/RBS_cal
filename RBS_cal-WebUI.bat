@@ -47,6 +47,12 @@ if not "%errorlevel%"=="0" goto :fail
 "%PYTHON_EXE%" -m pip install -r "%PROJECT_DIR%\requirements.txt" >>"%LOG_FILE%" 2>&1
 if not "%errorlevel%"=="0" goto :fail
 
+if exist "%PROJECT_DIR%\plasmid_designer\requirements.txt" (
+  echo install plasmid_designer module dependencies...
+  "%PYTHON_EXE%" -m pip install -r "%PROJECT_DIR%\plasmid_designer\requirements.txt" >>"%LOG_FILE%" 2>&1
+  if not "%errorlevel%"=="0" goto :fail
+)
+
 call :log "Check OSTIR"
 call :find_ostir
 if not defined OSTIR_BIN (
