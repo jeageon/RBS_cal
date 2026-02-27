@@ -710,6 +710,10 @@ def _humanize_ostir_error(stderr: str, stdout: str, returncode: int) -> str:
 def _coerce_cell(value: str) -> Any:
     if value == "":
         return value
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        return value
 
     if value.lower() in {"nan", "na", "none", "null"}:
         return value
@@ -751,16 +755,44 @@ def parse_csv_output(raw: str) -> Tuple[List[str], List[Dict[str, Any]]]:
         return [], []
 
     reader = csv.DictReader(sio)
-    rows = [dict(row) for row in reader if any(v.strip() for v in row.values())]
     if not reader.fieldnames:
         return [], []
 
+    raw_fieldnames = [str(name).strip() for name in reader.fieldnames if name is not None]
+    fieldnames = [name.lstrip("\ufeff") for name in raw_fieldnames]
+    fieldname_lookup = {name.lower().strip(): name for name in fieldnames}
+
     required_columns = {"start_codon", "start_position"}
-    if required_columns.intersection(reader.fieldnames):
-        columns = list(reader.fieldnames)
-        for row in rows:
-            for key, value in row.items():
-                row[key] = _coerce_cell(value.strip())
+    normalized = {name.lower() for name in fieldnames}
+    if not required_columns.issubset(normalized):
+        return [], []
+
+    rows: List[Dict[str, Any]] = []
+    for row in reader:
+        parsed_row: Dict[str, Any] = {}
+        has_value = False
+        for raw_key in reader.fieldnames or []:
+            if raw_key is None:
+                continue
+            key = fieldname_lookup.get(raw_key.lower().strip())
+            if key is None:
+                continue
+
+            value = row.get(raw_key, "")
+            if not has_value and isinstance(value, str) and value.strip():
+                has_value = True
+            elif not has_value and value not in {None, ""}:
+                has_value = True
+
+            if isinstance(value, str):
+                value = value.strip()
+            parsed_row[key] = _coerce_cell(value)
+
+        if has_value:
+            rows.append(parsed_row)
+
+    if rows:
+        columns = [fieldname_lookup[name.lower().strip()] for name in fieldnames if name.lower().strip() in fieldname_lookup]
         return columns, rows
 
     # If headers are not recognized as CSV output, ignore.
