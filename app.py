@@ -26,6 +26,10 @@ from flask import Flask, jsonify, render_template, request
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024  # 20 MB
 app.logger.setLevel(logging.INFO)
+
+from features.calculator_routes import register_calculator_routes
+from features.common_routes import register_common_routes
+from features.designer_routes import register_designer_routes
 OSTIR_BIN = os.environ.get("OSTIR_BIN", "ostir")
 TASKS_TTL_SECONDS = int(os.environ.get("RBS_TASK_TTL_SECONDS", "3600"))
 RBS_DESIGN_ITERATION_DEFAULT = int(os.environ.get("RBS_DESIGN_ITERATIONS", "500"))
@@ -2252,18 +2256,15 @@ def _run_estimate_core(
                 app.logger.debug("Failed to remove temporary input file: %s", temporary_path)
 
 
-@app.route("/")
-def index():
+def index_view():
     return render_template("index.html")
 
 
-@app.route("/health")
-def health():
+def health_view():
     return jsonify({"ok": True, "status": "ready"})
 
 
-@app.route("/run", methods=["POST"])
-def run_estimate():
+def run_estimate_view():
     temporary_path: Optional[Path] = None
     sequence_for_context: Optional[str] = None
     command_text = ""
@@ -2398,8 +2399,7 @@ def run_estimate():
                 app.logger.debug("Failed to remove temporary input file: %s", temporary_path)
 
 
-@app.route("/design", methods=["POST"])
-def run_design():
+def run_design_view():
     async_requested = request.form.get("async")
     if async_requested is None:
         async_requested = request.args.get("async")
@@ -2438,8 +2438,7 @@ def run_design():
     return jsonify(payload_result)
 
 
-@app.route("/tasks/<task_id>", methods=["GET"])
-def get_task(task_id: str):
+def get_task_view(task_id: str):
     _task_cleanup()
     with _TASK_LOCK:
         task = _BACKGROUND_TASKS.get(task_id)
@@ -2459,6 +2458,11 @@ def get_task(task_id: str):
                 )
 
     return jsonify(public_task)
+
+
+register_common_routes(app, index=index_view, health=health_view)
+register_calculator_routes(app, run_estimate=run_estimate_view)
+register_designer_routes(app, run_design=run_design_view, get_task=get_task_view)
 
 
 @app.errorhandler(Exception)
