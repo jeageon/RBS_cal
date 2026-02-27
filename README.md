@@ -38,7 +38,7 @@ Windows launcher is included:
 Run this `.bat` file by double-clicking.
 
 Behavior:
-- 버전: `v1.1.06`
+- 버전: `v1.1.08`
 - 로컬 `.venv` 기반 실행입니다. (`.conda_venv` 자동 생성/실행은 사용하지 않음)
 - ViennaRNA는 우선순위로 다음을 사용합니다.
   1) `libs\` 폴더의 CLI (`RNAfold`, `RNAsubopt`, `RNAeval`, 확장자 `.exe` 또는 실행 가능한 이름)
@@ -56,9 +56,9 @@ Behavior:
 3. 검증 실패 시 실행을 중단하고 원인 메시지를 로그에 출력합니다.
 
 권장 구조(패키지에 포함):
-- `bin\RNAfold(.exe)`
-- `bin\RNAsubopt(.exe)`
-- `bin\RNAeval(.exe)`
+- `libs\RNAfold(.exe)`
+- `libs\RNAsubopt(.exe)`
+- `libs\RNAeval(.exe)`
 - 또는 `libs\ViennaRNA-*.whl` 1개 이상
 
 원클릭으로 wheel만 먼저 받아 두려면:
@@ -66,7 +66,7 @@ Behavior:
 python -m pip download ViennaRNA>=2.6.4 -d libs --only-binary=:all:
 ```
 
-> 참고: `requirements.txt`에는 `ViennaRNA>=2.6.4`가 남아 있습니다. 그러나 실행은 `bin\`/`libs` 우선 정책으로 통제합니다.
+> 참고: `requirements.txt`에는 `ViennaRNA>=2.6.4`가 남아 있습니다. 그러나 실행은 `libs` 우선 정책으로 통제합니다.
 
 If OSTIR is not auto-discovered, set explicitly:
 ```bat
@@ -81,8 +81,8 @@ If startup logs show missing ViennaRNA CLI, check:
 
 If you ship bundled ViennaRNA runtime files with this repository:
 - put `ViennaRNA-*.whl` into `libs\` (wheel bootstrap), and/or
-- put `RNAfold`, `RNAsubopt`, `RNAeval` into `bin\`.
-- The launcher checks `bin\` and `libs\` first, then validates CLI availability and aborts on missing runtime.
+- put `RNAfold`, `RNAsubopt`, `RNAeval` into `libs\`.
+- The launcher checks `libs\` and `libs\\bin\` first, then validates CLI availability and aborts on missing runtime.
 
 ### Windows 배포용 바이너리 번들링 (권장)
 릴리즈 압축본에 실행 파일을 같이 넣으려면, 프로젝트 루트에 `libs` 폴더를 만들고 다음 파일을 그대로 넣으면 됩니다.
@@ -91,7 +91,7 @@ If you ship bundled ViennaRNA runtime files with this repository:
 2. `RNAsubopt.exe`
 3. `RNAeval.exe`
 
-동봉 시 `bin`은 자동으로 PATH 우선순위 상단에 추가되며, 배치 파일이 가장 먼저 `bin`의 바이너리를 사용합니다.
+동봉 시 `libs`는 자동으로 PATH 우선순위 상단에 추가되며, 배치 파일이 가장 먼저 `libs`의 바이너리를 사용합니다.
 
 릴리즈 ZIP 생성 예시(현재 저장소 기준):
 ```bash
@@ -105,9 +105,9 @@ zip -r "dist/RBS_cal-Windows-bundle.zip" \
 또는 단순하게 현재 폴더 전체를 압축하되, `.venv`/`.rbs_cal_web.log`/`.DS_Store`만 제외하면 됩니다.
 
 주의:
-- `bin` 내부 바이너리는 라이선스/배포 조건을 확인한 뒤 넣어주세요.
+- `libs` 내부 바이너리는 라이선스/배포 조건을 확인한 뒤 넣어주세요.
 - 바이너리 용량이 크다면 GitHub 릴리즈 업로드 용량 정책(일반적으로 2GB)을 확인하세요.
-- 기존처럼 별도 설치 환경에서 동작시키려면 `bin`을 비워두고 동작합니다.
+- 기존처럼 별도 설치 환경에서 동작시키려면 `libs`를 비워두고 동작합니다.
 
 릴리즈 노트는 [RELEASE_NOTES.md](RELEASE_NOTES.md)에서 최신 버전 이력만 한 번에 확인할 수 있습니다.
 

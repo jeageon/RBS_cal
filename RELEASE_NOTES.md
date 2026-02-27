@@ -1,35 +1,28 @@
 # RBS_cal Release Notes
 
-## v1.1.07 (현재 릴리즈)
+## v1.1.08 (현재 릴리즈)
 
-### 핵심 변경
-- Windows 런처의 ViennaRNA 기본 탐색 경로를 **`libs` 루트 중심**으로 통합했습니다.
-  - 기본 탐색 순서: `libs` → `libs\bin` → `libs\ViennaRNA-*.whl` → 나머지 기존 경로
-- `RNAfold / RNAsubopt / RNAeval` 3개 CLI 바이너리 존재를 시작 시 명시적으로 점검합니다.
-  - 누락 시 즉시 실패 메시지와 함께 종료해, “기동만 되는 것처럼 보이다가 안되는” 모호한 상태를 제거했습니다.
-- 자동 브라우저 오픈/로그 경로는 유지하고, 클린한 로컬 시작을 위해 경로 설정을 단일화했습니다.
-- 릴리즈 배포 문서를 통합해, `libs` 기반 배포 가이드를 한 곳에서 확인할 수 있게 정리했습니다.
+### 주요 변경
+- Windows 배포 가이드와 런처 메시지의 버전을 `1.1.08`로 정렬.
+- `README`의 ViennaRNA 로컬 번들 안내를 `bin` 표기에서 `libs` 중심으로 통합.
+- `libs\\RNAfold/RNAsubopt/RNAeval` 우선 정책을 문서와 런처 동작이 일치하도록 정리.
 
-### 배포 반영 가이드(요약)
-1. Windows 배포본 루트에 `libs`를 포함합니다.
-2. `libs`에 아래 3개를 넣습니다.
-   - `RNAfold.exe`
-   - `RNAsubopt.exe`
-   - `RNAeval.exe`
-3. 필요한 경우 `libs\ViennaRNA-*.whl`도 함께 넣어 부트스트랩으로 사용합니다.
-4. `RBS_cal-WebUI.bat`를 더블클릭하면 됩니다.
+## v1.1.07
 
-### 기존 변경(요약)
-- 이 릴리즈 이전의 변경 로그는 `/CHANGELOG.md` 하단의 연혁을 참고하세요.
+- Windows 런처의 ViennaRNA 기본 탐색 경로를 `libs` 루트 중심으로 통합.
+- `RNAfold`, `RNAsubopt`, `RNAeval` 3개 CLI 바이너리 시작 시 명시적 사전 점검 추가.
+- 배포 노트 분할 정리 정합성 개선.
 
 ## v1.1.06
-- `/design` 비동기 처리 안정화(백그라운드 worker start 보강)
-- 비동기 폴링 플로우 정합성 유지
+
+- RBS Designer 비동기 처리 안정화.
+- `POST /design` 후 백그라운드 Task 시작 및 `/tasks/<task_id>` 완료/실패 상태 플로우 정합성 개선.
 
 ## v1.1.05
-- macOS 자동 브라우저 오픈 보완
-- Flask 실행 상태 확인 로직 보강
+
+- macOS 자동 브라우저 오픈 UX 강화.
+- Flask 실행 상태 확인/오류 노출 흐름 정비.
 
 ---
 
-라이선스/배포 정책상 바이너리 대용량 파일은 릴리즈 본문 또는 별도 배포 채널에서 제공되는 구성품을 확인하세요.
+기타 기존 변경 사항과 자세한 내역은 `CHANGELOG.md`를 참고하세요.
