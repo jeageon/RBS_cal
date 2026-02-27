@@ -966,7 +966,9 @@
             {% else %}
               <div class="status warning">
                 plasmid_designer 탭은 현재 준비되지 않았습니다.
+                {% if plasmid_designer_project_dir %}<br />조회 경로: {{ plasmid_designer_project_dir }}{% endif %}
                 {% if plasmid_designer_error %}<br />{{ plasmid_designer_error }}{% endif %}
+                <br />환경변수 PLASMID_DESIGNER_PROJECT_DIR 또는 프로젝트 내 `plasmid_designer/` 폴더로 연결해 주세요.
               </div>
             {% endif %}
           </div>

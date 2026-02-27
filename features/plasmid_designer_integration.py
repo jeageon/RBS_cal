@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import importlib.util
-import os
 import sys
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -66,7 +65,7 @@ def register_plasmid_designer(
         "app_url": normalized_mount,
     }
 
-    root = Path(project_dir)
+    root = Path(project_dir).expanduser().resolve()
     if not root.exists():
         metadata["error"] = f"plasmid_designer project not found: {root}"
         return metadata

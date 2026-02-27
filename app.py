@@ -31,6 +31,31 @@ from features.calculator_routes import register_calculator_routes
 from features.common_routes import register_common_routes
 from features.designer_routes import register_designer_routes
 from features.plasmid_designer_integration import register_plasmid_designer
+
+
+PROJECT_DIR = Path(__file__).resolve().parent
+
+
+def _resolve_plasmid_designer_project_dir() -> str:
+    explicit = os.environ.get("PLASMID_DESIGNER_PROJECT_DIR", "").strip()
+    legacy_default = Path("/Users/jg/Documents/plasmid_designer")
+
+    candidates = []
+    if explicit:
+        candidates.append(Path(explicit))
+    candidates.append(PROJECT_DIR / "plasmid_designer")
+    candidates.append(legacy_default)
+
+    for candidate in candidates:
+        candidate_path = candidate.expanduser().resolve()
+        if candidate_path.exists() and (candidate_path / "plasmid_web_ui.py").exists():
+            return str(candidate_path)
+
+    if explicit:
+        return str(Path(explicit).expanduser().resolve())
+    return str(legacy_default)
+
+
 OSTIR_BIN = os.environ.get("OSTIR_BIN", "ostir")
 TASKS_TTL_SECONDS = int(os.environ.get("RBS_TASK_TTL_SECONDS", "3600"))
 RBS_DESIGN_ITERATION_DEFAULT = int(os.environ.get("RBS_DESIGN_ITERATIONS", "500"))
@@ -41,9 +66,7 @@ RBS_DESIGN_FULL_REFINEMENT_MULTIPLIER = max(1, int(os.environ.get("RBS_DESIGN_FU
 RBS_OSTIR_API_CACHE_SIZE = int(os.environ.get("RBS_OSTIR_API_CACHE_SIZE", "1024"))
 RBS_DEFAULT_ASYNC = os.environ.get("RBS_DEFAULT_ASYNC", "1") == "1"
 RBS_DEBUG_ERROR = os.environ.get("RBS_DEBUG_ERROR", "0") == "1"
-PLASMID_DESIGNER_PROJECT_DIR = os.environ.get(
-    "PLASMID_DESIGNER_PROJECT_DIR", "/Users/jg/Documents/plasmid_designer"
-)
+PLASMID_DESIGNER_PROJECT_DIR = _resolve_plasmid_designer_project_dir()
 PLASMID_DESIGNER_MOUNT = os.environ.get("PLASMID_DESIGNER_MOUNT", "/plasmid_designer")
 
 PLASMID_DESIGNER_STATE = register_plasmid_designer(
@@ -2273,6 +2296,7 @@ def index_view():
     return render_template(
         "index.html",
         plasmid_designer_enabled=bool(PLASMID_DESIGNER_STATE.get("enabled")),
+        plasmid_designer_project_dir=PLASMID_DESIGNER_STATE.get("project_dir"),
         plasmid_designer_mount=PLASMID_DESIGNER_URL,
         plasmid_designer_error=PLASMID_DESIGNER_STATE.get("error"),
     )

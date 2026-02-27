@@ -5,6 +5,7 @@ RBS expression estimation and RBS design web UI powered by OSTIR.
 ## Features
 - RBS Calculator: sequence/file input -> OSTIR prediction and table/graph output.
 - RBS Designer: target expression 기반 RBS 후보군 추천.
+- RBS Designer+plasmid_designer 통합 탭: `plasmid_designer` 프로젝트를 현재 저장소 하위 `plasmid_designer/`에 둔 뒤 자동 탑재.
 - 입력 서열이 매우 길어도 처리 안정성을 위해 Pre-sequence는 RBS 인접 50 bp,
   CDS는 start codon 기준으로 50 bp까지만 탐색에 사용되며,
   상위 후보 `topN × 2`개만 최종적으로 전체 길이 서열에서 재평가합니다.
@@ -24,6 +25,14 @@ python -m pip install -r requirements.txt
 python app.py
 ```
 Open `http://127.0.0.1:8000`.
+
+## 플라스미드 디자이너 통합 패키지 사용
+- 기본 동작은 현재 경로의 `plasmid_designer/` 폴더를 우선 탐색합니다.
+- 동일 경로에 `plasmid_web_ui.py`가 있고 Flask 앱이 있으면 탭이 자동으로 활성화됩니다.
+- 별도 위치를 강제로 지정하려면 실행 시 환경변수로 설정합니다:
+```bash
+export PLASMID_DESIGNER_PROJECT_DIR=/원하는/경로/plasmid_designer
+```
 
 ## One-click launch (macOS desktop shortcut)
 Use the mac shortcut script:
