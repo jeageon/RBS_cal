@@ -30,6 +30,7 @@ app.logger.setLevel(logging.INFO)
 from features.calculator_routes import register_calculator_routes
 from features.common_routes import register_common_routes
 from features.designer_routes import register_designer_routes
+from features.plasmid_designer_integration import register_plasmid_designer
 OSTIR_BIN = os.environ.get("OSTIR_BIN", "ostir")
 TASKS_TTL_SECONDS = int(os.environ.get("RBS_TASK_TTL_SECONDS", "3600"))
 RBS_DESIGN_ITERATION_DEFAULT = int(os.environ.get("RBS_DESIGN_ITERATIONS", "500"))
@@ -40,6 +41,18 @@ RBS_DESIGN_FULL_REFINEMENT_MULTIPLIER = max(1, int(os.environ.get("RBS_DESIGN_FU
 RBS_OSTIR_API_CACHE_SIZE = int(os.environ.get("RBS_OSTIR_API_CACHE_SIZE", "1024"))
 RBS_DEFAULT_ASYNC = os.environ.get("RBS_DEFAULT_ASYNC", "1") == "1"
 RBS_DEBUG_ERROR = os.environ.get("RBS_DEBUG_ERROR", "0") == "1"
+PLASMID_DESIGNER_PROJECT_DIR = os.environ.get(
+    "PLASMID_DESIGNER_PROJECT_DIR", "/Users/jg/Documents/plasmid_designer"
+)
+PLASMID_DESIGNER_MOUNT = os.environ.get("PLASMID_DESIGNER_MOUNT", "/plasmid_designer")
+
+PLASMID_DESIGNER_STATE = register_plasmid_designer(
+    app=app,
+    project_dir=PLASMID_DESIGNER_PROJECT_DIR,
+    mount_path=PLASMID_DESIGNER_MOUNT,
+)
+
+PLASMID_DESIGNER_URL = PLASMID_DESIGNER_STATE.get("app_url", PLASMID_DESIGNER_MOUNT)
 
 DEFAULT_ASD = "ACCTCCTTA"
 START_CODONS = ("ATG", "GTG", "TTG")
@@ -2257,7 +2270,12 @@ def _run_estimate_core(
 
 
 def index_view():
-    return render_template("index.html")
+    return render_template(
+        "index.html",
+        plasmid_designer_enabled=bool(PLASMID_DESIGNER_STATE.get("enabled")),
+        plasmid_designer_mount=PLASMID_DESIGNER_URL,
+        plasmid_designer_error=PLASMID_DESIGNER_STATE.get("error"),
+    )
 
 
 def health_view():

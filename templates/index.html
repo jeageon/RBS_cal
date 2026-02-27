@@ -665,7 +665,11 @@
       }
     </style>
   </head>
-  <body>
+    <body
+      data-plasmid-designer-enabled="{{ 'true' if plasmid_designer_enabled else 'false' }}"
+      data-plasmid-designer-url="{{ plasmid_designer_mount or '' }}"
+      data-plasmid-designer-error="{{ plasmid_designer_error or '' }}"
+    >
     <div class="wrap">
       <section class="header">
         <h1>RBS_cal Web UI</h1>
@@ -674,6 +678,7 @@
       <div class="tab-wrap">
         <button class="tab-btn active" type="button" data-tab="calculator">RBS Calculator</button>
         <button class="tab-btn" type="button" data-tab="designer">RBS Designer</button>
+        <button class="tab-btn" type="button" data-tab="plasmid_designer">plasmid_designer</button>
       </div>
 
       <section id="calculatorTab" class="tab-panel active">
@@ -945,6 +950,28 @@
           </section>
         </div>
       </section>
+
+      <section id="plasmidDesignerTab" class="tab-panel">
+        <div class="card">
+          <h2>plasmid_designer</h2>
+          <div class="body">
+            {% if plasmid_designer_enabled %}
+              <iframe
+                id="plasmidDesignerFrame"
+                class="tool-frame"
+                src="{{ plasmid_designer_mount }}"
+                title="plasmid_designer UI"
+                style="width: 100%; min-height: 78vh; border: 1px solid #dbeafe; border-radius: 8px;"
+              ></iframe>
+            {% else %}
+              <div class="status warning">
+                plasmid_designer 탭은 현재 준비되지 않았습니다.
+                {% if plasmid_designer_error %}<br />{{ plasmid_designer_error }}{% endif %}
+              </div>
+            {% endif %}
+          </div>
+        </div>
+      </section>
     </div>
 
     <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
@@ -952,6 +979,8 @@
       const tabButtons = document.querySelectorAll('.tab-btn');
       const calculatorTab = document.getElementById('calculatorTab');
       const designerTab = document.getElementById('designerTab');
+      const plasmidDesignerTab = document.getElementById('plasmidDesignerTab');
+      const isPlasmidDesignerEnabled = document.body.dataset.plasmidDesignerEnabled === 'true';
 
       const form = document.getElementById('ostir-form');
       const statusEl = document.getElementById('status');
@@ -995,12 +1024,15 @@
       const modeRadios = document.querySelectorAll('input[name="inputMode"]');
 
       function switchTab(tab) {
-        const target = tab === 'designer' ? 'designer' : 'calculator';
+        const target = tab === 'designer' ? 'designer' : tab === 'plasmid_designer' ? 'plasmid_designer' : 'calculator';
         tabButtons.forEach((btn) => {
           btn.classList.toggle('active', btn.dataset.tab === target);
         });
         calculatorTab.classList.toggle('active', target === 'calculator');
         designerTab.classList.toggle('active', target === 'designer');
+        if (plasmidDesignerTab) {
+          plasmidDesignerTab.classList.toggle('active', target === 'plasmid_designer');
+        }
       }
 
       tabButtons.forEach((btn) => {
