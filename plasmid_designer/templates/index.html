@@ -1,0 +1,1617 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Plasmid Insertion Planner</title>
+  <link
+    href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"
+    rel="stylesheet"
+    crossorigin="anonymous"
+  />
+  <style>
+    body { background: #f6f7fb; }
+    .card { border-radius: 12px; }
+    pre { white-space: pre-wrap; }
+    .reason-list { max-height: 180px; overflow: auto; }
+    .section-title { font-weight: 600; }
+    .viz-wrap svg { width: 100%; height: auto; display: block; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; }
+    .plasmid-track { transition: opacity 0.2s ease; }
+    .plasmid-label text { font-family: "Noto Sans KR", "Inter", sans-serif; font-size: 11px; fill: #111827; }
+    .plasmid-label rect { fill: #ffffff; stroke-width: 1; }
+    .plasmid-label .label-box,
+    .plasmid-label .label-text { opacity: 0; transition: opacity 0.16s ease; }
+    .plasmid-label .label-anchor-dot { stroke: #111827; stroke-width: 0.7; }
+    .plasmid-label:hover .label-box,
+    .plasmid-label:hover .label-text,
+    .plasmid-label.pinned .label-box,
+    .plasmid-label.pinned .label-text {
+      opacity: 1;
+    }
+    .plasmid-label[data-hidden="true"] { opacity: 0; pointer-events: none; }
+    .plasmid-fade { opacity: 0.08; }
+    .plasmid-highlight { filter: brightness(1.2); stroke-width: 1.7px; }
+    .plasmid-label-highlight { stroke: #111827; stroke-width: 1.2px; fill-opacity: 1; }
+    .viz-tip {
+      position: absolute;
+      pointer-events: none;
+      background: rgba(15, 23, 42, 0.95);
+      color: #fff;
+      border-radius: 6px;
+      padding: 6px 8px;
+      font-size: 12px;
+      line-height: 1.3;
+      white-space: pre;
+      max-width: 320px;
+      z-index: 10;
+      display: none;
+    }
+    .viz-toolbar .btn { white-space: nowrap; }
+    .tool-nav { overflow-x: auto; }
+    .tool-tab { display: none; }
+    .tool-tab.active { display: block; }
+    .tool-frame {
+      width: 100%;
+      min-height: 78vh;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      background: #fff;
+    }
+    .tool-tile {
+      border-radius: 10px;
+    }
+    .tool-badge {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      display: inline-block;
+      margin-right: 6px;
+    }
+    .tool-badge.running { background: #16a34a; }
+    .tool-badge.stopped { background: #9ca3af; }
+    .tool-status-log { font-size: 12px; }
+  </style>
+</head>
+<body>
+<div class="container py-4">
+  <h1 class="mb-2">Plasmid Insertion Planner</h1>
+  <p class="text-muted">primer3 없이 기존 primer_maker와 Safe-zone 엔진을 연동한 웹 데모</p>
+
+  <div class="d-flex flex-wrap gap-2 mb-3 tool-nav">
+    <button type="button" class="btn btn-primary active" data-tab="plannerTab">삽입 플래너</button>
+    <button type="button" class="btn btn-outline-primary" data-tab="primerTab" data-tool="primer_maker">PrimerMaker</button>
+    <button type="button" class="btn btn-outline-primary" data-tab="rbsTab" data-tool="rbs_cal">RBS_cal</button>
+    <button type="button" class="btn btn-outline-primary" data-tab="dh5aTab" data-tool="dh5a_utg">DH5a-UTG</button>
+  </div>
+
+  <section id="plannerTab" class="tool-tab active">
+
+  <section id="backbonePreviewCard" class="card p-3 shadow-sm mb-4 bg-white {% if not (result and result.backbone_preview and result.backbone_preview.image) %}d-none{% endif %}">
+    <h5 class="section-title">Backbone 미리보기 (실행 즉시 반영)</h5>
+    <div id="backbonePreviewStatus" class="text-muted">플라스미드 파일을 업로드하면 즉시 지도 미리보기가 생성됩니다.</div>
+    <div id="backbonePreviewWrap" class="text-center {% if not (result and result.backbone_preview and result.backbone_preview.image) %}d-none{% endif %}">
+      <img
+        id="backbonePreview"
+        class="img-fluid"
+        src="{{ result.backbone_preview.image if (result and result.backbone_preview and result.backbone_preview.image) else '' }}"
+        alt="Backbone plasmid preview"
+        style="max-width: 640px; width: 100%; height: auto;"
+      />
+    </div>
+    <div id="backbonePreviewMeta" class="small text-muted mt-2"></div>
+  </section>
+
+  {% if error %}
+  <div class="alert alert-danger">{{ error }}</div>
+  {% endif %}
+
+  <form id="plannerForm" class="card p-3 shadow-sm mb-4 bg-white" method="post" action="{{ url_for('run_view') }}" enctype="multipart/form-data">
+    <h5 class="section-title">1) 입력</h5>
+    <div class="row g-3">
+      <div class="col-md-6">
+        <label class="form-label">GenBank 파일</label>
+        <input id="genbankFileInput" type="file" name="genbank_file" class="form-control" accept=".gb,.gbk,.txt" required />
+        <div class="form-text">업로드 즉시 플라스미드 지도가 갱신됩니다.</div>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">목표 모드</label>
+        <select name="mode" class="form-select">
+          <option value="neutral" selected>neutral</option>
+          <option value="expression">expression</option>
+          <option value="fusion">fusion</option>
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">클로닝 전략</label>
+        <select name="strategy" class="form-select">
+          <option value="inverse_pcr" {% if request.form.get("strategy", "inverse_pcr") == "inverse_pcr" %}selected{% endif %}>inverse_pcr (Gibson 기본)</option>
+          <option value="restriction_double" {% if request.form.get("strategy", "") == "restriction_double" %}selected{% endif %}>restriction_double</option>
+          <option value="restriction_single" {% if request.form.get("strategy", "") == "restriction_single" %}selected{% endif %}>restriction_single</option>
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">삽입 입력 모드</label>
+        <select id="insertInputMode" name="insert_input_mode" class="form-select">
+          <option value="sequence" {% if request.form.insert_input_mode != "file" %}selected{% endif %}>직접 입력 (seq)</option>
+          <option value="file" {% if request.form.insert_input_mode == "file" %}selected{% endif %}>GB/FASTA 업로드</option>
+        </select>
+      </div>
+      <div id="insertSequenceGroup" class="col-md-6">
+        <label class="form-label">삽입 서열 (seq/FASTA 텍스트)</label>
+        <textarea id="insertSequenceInput" name="insert_sequence" class="form-control" rows="4" placeholder="예: ATGCATGC... 또는 FASTA 형태(>name ...)" spellcheck="false">{{ request.form.insert_sequence or "" }}</textarea>
+        <div class="form-text">입력한 서열을 기반으로 length/gc/insert_extreme/repeat_like이 자동 계산됩니다.</div>
+      </div>
+      <div id="insertFileGroup" class="col-md-6">
+        <label class="form-label">삽입 서열 파일</label>
+        <input id="insertFileInput" type="file" name="insert_file" class="form-control" accept=".gb,.gbk,.fasta,.fa,.fna,.txt" />
+        <div class="form-text">GenBank 또는 FASTA 파일 한 건을 업로드하세요.</div>
+      </div>
+      <div class="col-md-12">
+        <details id="insertDerivedFields" class="border rounded p-2 bg-light" {% if not (result and result.insert_metadata is defined) %}open{% endif %}>
+          <summary class="fw-semibold">삽입 서열 자동 계산 파라미터</summary>
+          <div class="row g-3 mt-2">
+            <div class="col-md-3">
+              <label class="form-label">삽입 길이(bp)</label>
+              <input id="insertLengthInput" type="number" name="insert_length" class="form-control" readonly value="{{ result.insert_metadata.length_bp if (result and result.insert_metadata is defined) else (request.form.insert_length or 0) }}" min="0" />
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">삽입 GC</label>
+              <input id="insertGcInput" type="number" name="insert_gc" class="form-control" step="0.01" min="0" max="1" readonly value="{{ '%.4f'|format(result.insert_metadata.gc_content) if (result and result.insert_metadata is defined and result.insert_metadata.gc_content is not none) else '' }}" />
+              <div class="form-text">예: 0.50</div>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">Insert repeat_like</label>
+              <input id="insertRepeatInput" type="number" name="insert_repeat_like" class="form-control" step="0.01" min="0" max="1" readonly value="{{ '%.4f'|format(result.insert_metadata.repeat_like) if (result and result.insert_metadata is defined and result.insert_metadata.repeat_like is not none) else '0.0' }}" />
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">insert extreme_gc</label>
+              <input id="insertExtremeGcInput" type="number" name="insert_extreme_gc" class="form-control" step="0.01" min="0" max="1" readonly value="{{ '%.4f'|format(result.insert_metadata.gc_extreme) if (result and result.insert_metadata is defined and result.insert_metadata.gc_extreme is not none) else '' }}" />
+            </div>
+          </div>
+          <div id="insertWarnings" class="small text-muted mt-2"></div>
+        </details>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">buffer bp</label>
+        <input type="number" name="buffer" class="form-control" value="100" min="0" />
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">top-k</label>
+        <input type="number" name="top_k" class="form-control" value="20" min="1" />
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">zone당 후보 샘플 수</label>
+        <input type="number" name="candidate_per_zone" class="form-control" value="3" min="1" />
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">flank(bp)</label>
+        <input type="number" name="flank" class="form-control" value="350" min="80" />
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">risk ratio cap</label>
+        <input type="number" name="risk_ratio_cap" class="form-control" step="0.01" min="0.01" value="0.25" />
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">risk weight</label>
+        <input type="number" name="risk_weight" class="form-control" step="0.1" min="0" value="1.0" />
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">전략 윈도우(bp)</label>
+        <input type="number" name="strategy_window" class="form-control" value="7000" min="1000" />
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">max product(bp)</label>
+        <input type="number" name="max_product" class="form-control" value="4000" min="1" />
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">host</label>
+        <input type="text" name="host" class="form-control" value="E. coli" />
+      </div>
+
+      <div class="col-md-12">
+        <label class="form-label">manual tag</label>
+        <textarea name="manual_tags" class="form-control" rows="3" placeholder="예시: lacZ=disruptable\nampR=protected"></textarea>
+        <div class="form-text">key=value 형식 한 줄당 하나, priority는 마지막 값으로 덮어씁니다.</div>
+      </div>
+
+      <div class="col-md-12">
+        <div class="form-check form-check-inline">
+          <input class="form-check-input" type="checkbox" id="damDcm" name="dam_dcm_sensitive" />
+          <label class="form-check-label" for="damDcm">Dam/Dcm 민감도 반영</label>
+        </div>
+        <div class="form-check form-check-inline">
+          <input class="form-check-input" type="checkbox" id="toxic" name="toxic" />
+          <label class="form-check-label" for="toxic">독성 유전자</label>
+        </div>
+        <div class="form-check form-check-inline">
+          <input class="form-check-input" type="checkbox" id="exclude_disruptable" name="exclude_disruptable" />
+          <label class="form-check-label" for="exclude_disruptable">disruptable 구간 제외</label>
+        </div>
+        <div class="form-check form-check-inline">
+          <input class="form-check-input" type="checkbox" id="exclude_neutral" name="exclude_neutral" />
+          <label class="form-check-label" for="exclude_neutral">neutral 구간 제외</label>
+        </div>
+      </div>
+    </div>
+    <div class="mt-3">
+      <button type="submit" class="btn btn-primary">파이프라인 실행</button>
+    </div>
+  </form>
+
+  <div class="mb-4">
+    <button id="runSanity" class="btn btn-outline-secondary btn-sm">Sanity checks 실행</button>
+    <span id="sanityStatus" class="ms-2 text-muted"></span>
+  </div>
+  <pre id="sanityResult" class="d-none"></pre>
+
+  {% if result %}
+  <section class="card p-3 shadow-sm mb-4 bg-white">
+    <h5 class="section-title">실행 결과</h5>
+    <p class="mb-1">record_id: <strong>{{ result.record_id }}</strong></p>
+    <p class="mb-1">topology: {{ result.topology }} / length: {{ result.length }}</p>
+    <p class="mb-1">strategy: {{ result.strategy }} / mode: {{ result.target_mode }} / host: {{ result.host }}</p>
+    {% if result.insert_metadata %}
+    <p class="mb-1">삽입 서열 메타: 길이 {{ result.insert_metadata.length_bp }}bp, GC {{ '%.4f'|format(result.insert_metadata.gc_content) if result.insert_metadata.gc_content is not none else '-' }}, 극단 GC {{ '%.4f'|format(result.insert_metadata.gc_extreme) if result.insert_metadata.gc_extreme is not none else '-' }}, repeat_like {{ '%.4f'|format(result.insert_metadata.repeat_like) if result.insert_metadata.repeat_like is not none else '-' }} (source: {{ result.insert_metadata.source or 'manual' }})</p>
+    {% endif %}
+    <p class="mb-1">safe zone 개수: {{ result.safe_zones_1based|length }}</p>
+    {% if result.manual_tag_warnings %}
+    <div class="alert alert-warning mt-2 mb-0">
+      <strong>입력/태그 경고</strong>
+      <ul class="mb-0">
+        {% for w in result.manual_tag_warnings %}
+        <li>{{ w }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+  </section>
+
+  {% endif %}
+
+  <section class="card p-3 shadow-sm mb-4 bg-white">
+    <h5 class="section-title">Safe zones</h5>
+    <ul class="mb-0">
+      {% for s, e in result.safe_zones_1based %}
+      <li>{{ s }} - {{ e }}</li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% if result.visualization %}
+  <section class="card p-3 shadow-sm mb-4 bg-white viz-wrap">
+    <h5 class="section-title">원형 맵 (레이블 최적화)</h5>
+    <div class="d-flex flex-wrap gap-2 align-items-center justify-content-between mb-2" id="vizControls">
+      <div class="d-flex flex-wrap gap-2">
+        <label class="form-check form-check-inline m-0">
+          <input type="checkbox" class="form-check-input viz-toggle" data-kind="safe" checked />
+          <span class="form-check-label">Safe</span>
+        </label>
+        <label class="form-check form-check-inline m-0">
+          <input type="checkbox" class="form-check-input viz-toggle" data-kind="protected" checked />
+          <span class="form-check-label">Protected+Buffer</span>
+        </label>
+        <label class="form-check form-check-inline m-0">
+          <input type="checkbox" class="form-check-input viz-toggle" data-kind="feature" checked />
+          <span class="form-check-label">Feature</span>
+        </label>
+        <label class="form-check form-check-inline m-0">
+          <input type="checkbox" class="form-check-input viz-toggle" data-kind="candidate" checked />
+          <span class="form-check-label">Candidate</span>
+        </label>
+      </div>
+      <div class="btn-toolbar viz-toolbar">
+        <div class="btn-group btn-group-sm me-2" role="group" aria-label="layout-mode">
+          <button id="viewCircular" type="button" class="btn btn-outline-secondary active">원형</button>
+          <button id="viewLinear" type="button" class="btn btn-outline-secondary">원형선형</button>
+        </div>
+        <div class="btn-group btn-group-sm" role="group" aria-label="zoom-controls">
+          <button id="zoomOut" type="button" class="btn btn-outline-secondary">−</button>
+          <button id="zoomReset" type="button" class="btn btn-outline-secondary">100%</button>
+          <button id="zoomIn" type="button" class="btn btn-outline-secondary">＋</button>
+        </div>
+      </div>
+    </div>
+    <div id="vizContainer">
+      <div class="position-relative">
+        <svg id="plasmidViz" width="920" height="560" viewBox="0 0 920 560" preserveAspectRatio="xMidYMid meet"></svg>
+        <div id="vizTooltip" class="viz-tip"></div>
+      </div>
+    </div>
+    <div class="mt-2 text-muted" id="vizSummary">맵 항목 로드 중...</div>
+    <div class="mt-2">
+      <strong>Tip:</strong> 라벨이 겹치지 않도록 좌우 컬럼 충돌 보정 후 배치됩니다. 라벨은 기본적으로 간결하게 표시되고, 마우스 오버/클릭으로 상세를 조회하세요.
+    </div>
+    <script>
+      (function() {
+        const SPEC = {{ result.visualization|tojson }};
+        const svg = document.getElementById("plasmidViz");
+        const summary = document.getElementById("vizSummary");
+        const toggles = document.querySelectorAll(".viz-toggle");
+        const tooltip = document.getElementById("vizTooltip");
+        const btnCircular = document.getElementById("viewCircular");
+        const btnLinear = document.getElementById("viewLinear");
+        const btnZoomIn = document.getElementById("zoomIn");
+        const btnZoomOut = document.getElementById("zoomOut");
+        const btnZoomReset = document.getElementById("zoomReset");
+
+        if (!svg || !SPEC || typeof SPEC.length !== "number") {
+          summary.textContent = "시각화 데이터가 비어있습니다.";
+          return;
+        }
+
+        const width = 920;
+        const height = 560;
+        const left = 130;
+        const right = 130;
+        const top = 70;
+        const bottom = 90;
+        const cx = width / 2;
+        const cy = height / 2;
+        const maxR = Math.min(width - left - right, height - top - bottom) / 2;
+        const lineY = cy + 1;
+        const radii = {
+          safe: maxR * 0.75,
+          protected: maxR * 0.63,
+          feature: maxR * 0.46,
+          candidate: maxR * 0.33
+        };
+        const colors = {
+          safe: "#6d4c41",
+          protected: "#c62828",
+          neutral: "#4db6ac",
+          protected_feat: "#1f5fa8",
+          disruptable: "#ffd54f",
+          neutral_feat: "#2e7d32",
+          candidate: "#6a1b9a",
+          unknown: "#9e9e9e",
+          feature_other: "#546e7a"
+        };
+        const labelHeight = 15;
+        const leftX = 14;
+        const rightX = width - 14;
+        const topMin = top + 8;
+        const topMax = height - bottom - 8;
+        const view = {zoom: 1, tx: 0, ty: 0, minZoom: 0.6, maxZoom: 2.6, dragging: false, startX: 0, startY: 0};
+        let currentLayout = "circular";
+        let pinnedId = null;
+        const ns = "http://www.w3.org/2000/svg";
+        const layer = document.createElementNS(ns, "g");
+        layer.setAttribute("id", "vizLayer");
+        const textCanvas = document.createElement("canvas");
+        const textCtx = textCanvas.getContext("2d");
+        textCtx.font = "11px Arial";
+
+        while (svg.lastChild) {
+          svg.removeChild(svg.lastChild);
+        }
+        svg.appendChild(layer);
+        const root = svg.ownerDocument.createElementNS(ns, "g");
+        layer.appendChild(root);
+
+        function clamp(v, lo, hi) {
+          return Math.min(hi, Math.max(lo, v));
+        }
+
+        function textWidth(text) {
+          const src = text || "";
+          if (!textCtx) {
+            return Math.max(42, src.length * 7.1);
+          }
+          return Math.max(42, Math.ceil(textCtx.measureText(src).width) + 10);
+        }
+
+        function angleFromPos(pos) {
+          return ((pos % SPEC.length) / SPEC.length) * 360 - 90;
+        }
+
+        function polar(angleDeg, r) {
+          const rad = angleDeg * Math.PI / 180;
+          return {
+            x: cx + Math.cos(rad) * r,
+            y: cy + Math.sin(rad) * r
+          };
+        }
+
+        function arcPath(start, end, r) {
+          if (SPEC.length <= 0) return "";
+          if (end <= start) {
+            const left = arcPath(start, SPEC.length, r);
+            const right = arcPath(0, end, r);
+            if (!left || left === "M 0 0") return "";
+            return `${left}${right}`;
+          }
+          if (start === end || SPEC.length <= 0) return "";
+
+          let a0 = angleFromPos(start);
+          let a1 = angleFromPos(end);
+          let span = ((a1 - a0 + 360) % 360);
+          if (end === SPEC.length) {
+            span = 360;
+            a1 = a0 + 359.999;
+          }
+          if (span >= 359.9) {
+            return `M ${cx + r} ${cy} A ${r} ${r} 0 1 1 ${cx + r - 0.0001} ${cy}`;
+          }
+          if (span <= 0) return "";
+
+          const p0 = polar(a0, r);
+          const p1 = polar(a1, r);
+          const largeArc = span > 180 ? 1 : 0;
+          return `M ${p0.x.toFixed(2)} ${p0.y.toFixed(2)} A ${r.toFixed(2)} ${r.toFixed(2)} 0 ${largeArc} 1 ${p1.x.toFixed(2)} ${p1.y.toFixed(2)}`;
+        }
+
+        function addPath(d, color, cls, id, kind, kindName, title) {
+          if (!d) return;
+          const path = document.createElementNS(ns, "path");
+          path.setAttribute("d", d);
+          path.setAttribute("fill", "none");
+          path.setAttribute("stroke", color);
+          path.setAttribute("stroke-width", kindName === "candidate" ? 9 : 11);
+          path.setAttribute("stroke-linecap", "round");
+          path.setAttribute("class", `plasmid-track ${cls}`);
+          path.setAttribute("data-kind", kind);
+          path.setAttribute("data-id", id);
+          if (title) {
+            const tt = document.createElementNS(ns, "title");
+            tt.textContent = title;
+            path.appendChild(tt);
+          }
+          root.appendChild(path);
+          return path;
+        }
+
+        function addLinearTrackInterval(item, kind, yBase, trackColor) {
+          if (!item || typeof item.start !== "number" || typeof item.end !== "number") {
+            return;
+          }
+          const x0 = left + ((item.start % SPEC.length) / SPEC.length) * (width - left - right);
+          const x1 = left + ((item.end % SPEC.length) / SPEC.length) * (width - left - right);
+          const half = 5;
+          if (item.end >= item.start) {
+            const r = document.createElementNS(ns, "rect");
+            r.setAttribute("x", Math.min(x0, x1));
+            r.setAttribute("y", yBase - half);
+            r.setAttribute("width", Math.max(1, Math.abs(x1 - x0)));
+            r.setAttribute("height", 2 * half);
+            r.setAttribute("fill", trackColor);
+            r.setAttribute("data-kind", kind);
+            r.setAttribute("data-id", item.id);
+            if (item.label) {
+              const tt = document.createElementNS(ns, "title");
+              tt.textContent = item.label;
+              r.appendChild(tt);
+            }
+            root.appendChild(r);
+            return;
+          }
+          const widthStrip = width - left - right;
+          const r1 = document.createElementNS(ns, "rect");
+          r1.setAttribute("x", x0);
+          r1.setAttribute("y", yBase - half);
+          r1.setAttribute("width", Math.max(1, width - right - x0));
+          r1.setAttribute("height", 2 * half);
+          r1.setAttribute("fill", trackColor);
+          r1.setAttribute("data-kind", kind);
+          r1.setAttribute("data-id", item.id);
+          const r2 = document.createElementNS(ns, "rect");
+          r2.setAttribute("x", left);
+          r2.setAttribute("y", yBase - half);
+          r2.setAttribute("width", Math.max(1, x1 - left));
+          r2.setAttribute("height", 2 * half);
+          r2.setAttribute("fill", trackColor);
+          r2.setAttribute("data-kind", kind);
+          r2.setAttribute("data-id", item.id);
+          if (item.label) {
+            const t1 = document.createElementNS(ns, "title");
+            t1.textContent = item.label;
+            r1.appendChild(t1);
+            const t2 = document.createElementNS(ns, "title");
+            t2.textContent = item.label;
+            r2.appendChild(t2);
+          }
+          root.appendChild(r1);
+          root.appendChild(r2);
+        }
+
+        function addLabel(x, y, text, kind, id, anchorX, anchorY, tip) {
+          const g = document.createElementNS(ns, "g");
+          g.setAttribute("class", "plasmid-label");
+          g.setAttribute("data-kind", kind);
+          g.setAttribute("data-id", id);
+          if (tip) {
+            g.setAttribute("data-tooltip", tip);
+          }
+          const isLeft = anchorX < cx;
+
+          const rect = document.createElementNS(ns, "rect");
+          const labelText = document.createElementNS(ns, "text");
+          const anchor = document.createElementNS(ns, "circle");
+          const line = document.createElementNS(ns, "line");
+          const branch = document.createElementNS(ns, "line");
+          const labelW = textWidth(text);
+          const relAnchorX = anchorX - x;
+          const relAnchorY = anchorY - y;
+          const boxX = isLeft ? -(labelW + 2) : 2;
+          const anchorXLocal = isLeft ? boxX - 4 : boxX + 4;
+
+          labelText.textContent = text;
+          labelText.setAttribute("class", "label-text");
+          labelText.setAttribute("x", isLeft ? -4 : 4);
+          labelText.setAttribute("y", 3);
+          labelText.setAttribute("text-anchor", isLeft ? "end" : "start");
+          labelText.setAttribute("dominant-baseline", "middle");
+          rect.setAttribute("class", "label-box");
+          rect.setAttribute("x", boxX);
+          rect.setAttribute("y", -8);
+          rect.setAttribute("width", labelW);
+          rect.setAttribute("height", 16);
+          rect.setAttribute("rx", 4);
+          rect.setAttribute("stroke", "none");
+          rect.setAttribute("fill", "#ffffffcc");
+
+          anchor.setAttribute("cx", anchorXLocal);
+          anchor.setAttribute("cy", 0);
+          anchor.setAttribute("r", 2.6);
+          anchor.setAttribute("fill", "#111827");
+          anchor.setAttribute("class", "label-anchor-dot");
+
+          line.setAttribute("x1", relAnchorX);
+          line.setAttribute("y1", relAnchorY);
+          line.setAttribute("x2", anchorXLocal);
+          line.setAttribute("y2", 0);
+
+          line.setAttribute("stroke", "#374151");
+          line.setAttribute("stroke-width", 1);
+          line.setAttribute("data-kind", kind);
+          line.setAttribute("data-id", id);
+
+          branch.setAttribute("x1", anchorXLocal);
+          branch.setAttribute("x2", isLeft ? boxX + 2 : boxX + labelW - 2);
+          branch.setAttribute("y1", 0);
+          branch.setAttribute("y2", 0);
+          branch.setAttribute("stroke", "#374151");
+          branch.setAttribute("stroke-width", 1);
+          branch.setAttribute("data-kind", kind);
+          branch.setAttribute("data-id", id);
+
+          g.setAttribute("transform", `translate(${x},${y})`);
+          if (tip) {
+            const tt = document.createElementNS(ns, "title");
+            tt.textContent = tip;
+            g.appendChild(tt);
+          }
+
+          g.appendChild(line);
+          g.appendChild(branch);
+          g.appendChild(rect);
+          g.appendChild(labelText);
+          g.appendChild(anchor);
+          root.appendChild(g);
+
+          return {g, line, branch};
+        }
+
+        function resolveColumn(items) {
+          if (!items.length) return [];
+          const working = items
+            .slice()
+            .sort((a, b) => a.prefY - b.prefY)
+            .map((item, idx) => ({
+              ...item,
+              y: clamp(item.prefY, topMin + labelHeight / 2, topMax - labelHeight / 2),
+              rank: idx,
+              h: labelHeight,
+              w: textWidth(item.labelText),
+            }));
+
+          const minGap = 14;
+          for (let iteration = 0; iteration < 20; iteration++) {
+            for (let i = 0; i < working.length; i++) {
+              working[i].y += (working[i].prefY - working[i].y) * 0.2;
+            }
+            working.forEach((item, idx) => {
+              item.y = clamp(item.y, topMin + item.h / 2, topMax - item.h / 2);
+              if (idx > 0) {
+                const prev = working[idx - 1];
+                const need = prev.y + prev.h / 2 + item.h / 2 + minGap;
+                if (item.y < need) {
+                  item.y = need;
+                }
+              }
+            });
+            for (let i = working.length - 2; i >= 0; i--) {
+              const curr = working[i];
+              const next = working[i + 1];
+              const need = next.y - curr.h / 2 - next.h / 2 - minGap;
+              if (curr.y > need) {
+                curr.y = need;
+              }
+            }
+          }
+          const overflow = working[0].y - (topMin + labelHeight / 2);
+          if (overflow < 0) {
+            const shift = -overflow;
+            working.forEach((item) => {
+              item.y += shift;
+            });
+          }
+          const overflowBottom = working[working.length - 1].y + labelHeight / 2 - (topMax - 1);
+          if (overflowBottom > 0) {
+            const shift = -overflowBottom;
+            working.forEach((item) => {
+              item.y += shift;
+            });
+          }
+          return working;
+        }
+
+        function featureColor(kind, importance) {
+          const imp = (importance || "other").toLowerCase();
+          if (kind === "candidate") return colors.candidate;
+          if (kind === "safe") return colors.safe;
+          if (kind === "protected") return colors.protected;
+          if (kind === "feature") {
+            if (imp === "protected") return colors.protected_feat;
+            if (imp === "disruptable") return colors.disruptable;
+            if (imp === "neutral") return colors.neutral_feat;
+          }
+          return colors.feature_other;
+        }
+
+        function buildArcInterval(track, item, kind, kindClass) {
+          let d = "";
+          if (currentLayout === "linear") {
+            return;
+          }
+          if (item.end >= item.start) {
+            if (item.end - item.start >= SPEC.length) {
+              d = arcPath(0, SPEC.length, radii[kind]);
+            } else {
+              d = arcPath(item.start, item.end, radii[kind]);
+            }
+          } else {
+            d = `${arcPath(item.start, SPEC.length, radii[kind])} ${arcPath(0, item.end, radii[kind])}`;
+          }
+          return addPath(d, featureColor(kind, item.importance), kindClass, item.id, kind, kind, item.label || item.id);
+        }
+
+        function render() {
+          while (root.lastChild) {
+            root.removeChild(root.lastChild);
+          }
+          layer.setAttribute("transform", `translate(${view.tx} ${view.ty}) scale(${view.zoom})`);
+
+          const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
+          title.textContent = `Plasmid visualization ${SPEC.record_id}`;
+          root.appendChild(title);
+
+          if (currentLayout !== "linear") {
+            const circleBg = document.createElementNS(ns, "circle");
+            circleBg.setAttribute("cx", cx);
+            circleBg.setAttribute("cy", cy);
+            circleBg.setAttribute("r", maxR + 4);
+            circleBg.setAttribute("fill", "none");
+            circleBg.setAttribute("stroke", "#e5e7eb");
+            circleBg.setAttribute("stroke-width", 1.4);
+            root.appendChild(circleBg);
+          } else {
+            const centerLineY = lineY;
+            const line = document.createElementNS(ns, "line");
+            line.setAttribute("x1", left);
+            line.setAttribute("x2", width - right);
+            line.setAttribute("y1", centerLineY);
+            line.setAttribute("y2", centerLineY);
+            line.setAttribute("stroke", "#e5e7eb");
+            line.setAttribute("stroke-width", 1.4);
+            line.setAttribute("stroke-dasharray", "5 8");
+            root.appendChild(line);
+          }
+
+          for (const [kind, tracks] of Object.entries(SPEC.tracks || {})) {
+            for (const item of tracks || []) {
+              if (currentLayout === "linear") {
+                const yBase = kind === "safe" ? cy - 58 : kind === "protected" ? cy - 34 : kind === "feature" ? cy - 8 : cy + 24;
+                addLinearTrackInterval(
+                  {
+                    ...item,
+                    importance: item.importance,
+                    id: item.id,
+                    label: item.label || `${kind}-${item.start}-${item.end}`,
+                  },
+                  kind,
+                  yBase,
+                  featureColor(kind, item.importance),
+                );
+                continue;
+              }
+              buildArcInterval(
+                kind === "candidate" ? "candidate" : kind === "protected" ? "protected" : kind,
+                item,
+                kind === "candidate" ? "candidate" : kind,
+                `kind-${kind}`,
+              );
+            }
+          }
+
+          const labels = (SPEC.labels || []).map((item, idx) => {
+            const start = Number(item.start);
+            const end = Number(item.end);
+            const mid = ((start + end) / 2);
+            const ang = angleFromPos(mid);
+            const rad = ang * Math.PI / 180;
+            const trackR = item.kind === "candidate" ? radii.candidate : radii.feature;
+            const linearAnchorY = item.kind === "candidate" ? cy + 24 : item.kind === "feature" ? cy - 8 : cy - 34;
+            return {
+              ...item,
+              mid,
+              ang,
+              anchorX: currentLayout === "linear"
+                ? (left + ((mid % SPEC.length) / SPEC.length) * (width - left - right))
+                : cx + Math.cos(rad) * trackR,
+              anchorY: currentLayout === "linear"
+                ? linearAnchorY
+                : cy + Math.sin(rad) * trackR,
+              prefY: currentLayout === "linear"
+                ? linearAnchorY
+                : (cy + Math.sin(rad) * trackR),
+              labelText: item.label || `${item.kind.toUpperCase()}${idx + 1}`,
+              tooltip: item.tooltip || item.full || item.label,
+            };
+          });
+
+          const leftItems = [];
+          const rightItems = [];
+          for (const item of labels) {
+            if (item.anchorX < (width / 2)) {
+              leftItems.push(item);
+            } else {
+              rightItems.push(item);
+            }
+          }
+          const finalLeft = resolveColumn(
+            leftItems.map((item) => ({
+              ...item,
+              prefY: clamp(item.prefY, topMin + labelHeight / 2, topMax - labelHeight / 2),
+            }))
+          );
+          const finalRight = resolveColumn(
+            rightItems.map((item) => ({
+              ...item,
+              prefY: clamp(item.prefY, topMin + labelHeight / 2, topMax - labelHeight / 2),
+            }))
+          );
+
+          const withViz = [...finalLeft, ...finalRight];
+          for (const item of withViz) {
+            const xCol = item.anchorX < cx ? leftX : rightX;
+            const elements = addLabel(
+              xCol,
+              item.y,
+              item.labelText,
+              item.kind || "feature",
+              item.id || `label-${item.kind}-${item.labelText}`,
+              item.anchorX,
+              item.anchorY,
+              `${item.full || item.labelText}\n${item.tooltip || item.type || ""}`
+            );
+            if (!elements) continue;
+            item.viz = {
+              labelGroup: elements.g,
+              lineMain: elements.line,
+              lineBranch: elements.branch,
+              y: item.y,
+            };
+          }
+          for (const label of withViz) {
+            if (!label.viz) continue;
+            const groupColor = featureColor(label.kind || "feature", label.importance);
+            if (label.viz.labelGroup) {
+              const text = label.viz.labelGroup.querySelector("text");
+              if (text) {
+                text.setAttribute("fill", groupColor);
+              }
+              const rect = label.viz.labelGroup.querySelector("rect");
+              if (rect) {
+                rect.setAttribute("stroke", groupColor);
+              }
+              const anchor = label.viz.labelGroup.querySelector("circle");
+              if (anchor) {
+                anchor.setAttribute("fill", groupColor);
+              }
+              if (pinnedId === label.id) {
+                label.viz.labelGroup.classList.add("pinned");
+              }
+            }
+          }
+
+          if (SPEC.length <= 0) {
+            summary.textContent = "플라스미드 길이가 유효하지 않습니다.";
+            return;
+          }
+          const stats = SPEC.stats || {};
+          summary.textContent = `safe=${stats.safe_count || 0}, protected=${stats.protected_count || 0}, feature=${stats.feature_count || 0}, candidate=${stats.candidate_count || 0}, labels=${stats.label_count || 0}`;
+
+          root.querySelectorAll("[data-kind]").forEach((el) => {
+            el.addEventListener("mouseenter", onPointerIn);
+            el.addEventListener("mousemove", onPointerMove);
+            el.addEventListener("mouseleave", onPointerOut);
+            el.addEventListener("click", onPointerClick);
+          });
+          applyHighlight(pinnedId);
+        }
+
+        function applyFilter(kind, enabled) {
+          root.querySelectorAll(`[data-kind="${kind}"]`).forEach((el) => {
+            if (enabled) {
+              el.removeAttribute("data-hidden");
+              el.style.opacity = "1";
+            } else {
+              el.setAttribute("data-hidden", "true");
+              el.style.opacity = "0.05";
+            }
+          });
+        }
+
+        toggles.forEach((chk) => {
+          chk.addEventListener("change", () => {
+            const kind = chk.getAttribute("data-kind");
+            applyFilter(kind, chk.checked);
+          });
+        });
+
+        function applyView() {
+          layer.setAttribute("transform", `translate(${view.tx} ${view.ty}) scale(${view.zoom})`);
+        }
+
+        function setLayout(mode) {
+          currentLayout = mode;
+          btnCircular.classList.toggle("active", mode === "circular");
+          btnLinear.classList.toggle("active", mode === "linear");
+          render();
+        }
+
+        function showTooltip(event, text) {
+          if (!tooltip) return;
+          tooltip.textContent = text || "";
+          tooltip.style.display = "block";
+          const rect = svg.getBoundingClientRect();
+          tooltip.style.left = `${event.clientX - rect.left + 10}px`;
+          tooltip.style.top = `${event.clientY - rect.top + 10}px`;
+        }
+
+        function hideTooltip() {
+          if (!tooltip) return;
+          tooltip.style.display = "none";
+        }
+
+        function onPointerIn(event) {
+          const el = event.target.closest("[data-kind][data-id]");
+          if (!el) return;
+          const kind = el.getAttribute("data-kind");
+          const id = el.getAttribute("data-id");
+          applyHighlight(id);
+        }
+
+        function onPointerMove(event) {
+          const el = event.target.closest("[data-kind][data-id]");
+          if (!el) return;
+          const elId = el.getAttribute("data-id");
+          const kind = el.getAttribute("data-kind");
+          const title = `${kind} / ${elId}\n${el.getAttribute("data-tooltip") || ""}`.trim();
+          if (tooltip) {
+            showTooltip(event, title);
+          }
+        }
+
+        function onPointerOut() {
+          hideTooltip();
+          applyHighlight(pinnedId);
+        }
+
+        function onPointerClick(event) {
+          const el = event.target.closest("[data-kind][data-id]");
+          if (!el) return;
+          event.stopPropagation();
+          const id = el.getAttribute("data-id");
+          if (!id) return;
+          pinnedId = pinnedId === id ? null : id;
+          applyHighlight(pinnedId);
+        }
+
+        function applyHighlight(id) {
+          root.querySelectorAll("[data-kind]").forEach((x) => {
+            x.classList.remove("plasmid-fade");
+            x.classList.remove("plasmid-highlight");
+            if (x.classList.contains("plasmid-label")) {
+              x.classList.remove("pinned");
+            }
+          });
+
+          if (!id) {
+            return;
+          }
+          root.querySelectorAll(`[data-id="${id}"]`).forEach((el) => {
+            el.classList.add("plasmid-highlight");
+            if (el.classList.contains("plasmid-label")) {
+              el.classList.add("pinned");
+            }
+          });
+          const kind = root.querySelector(`[data-id="${id}"]`)?.getAttribute("data-kind");
+          if (!kind) return;
+          root.querySelectorAll(`[data-kind="${kind}"]`).forEach((el) => {
+            if (el.getAttribute("data-id") !== id) {
+              el.classList.add("plasmid-fade");
+            }
+          });
+        }
+
+        function setZoom(next) {
+          const z = clamp(next, view.minZoom, view.maxZoom);
+          view.zoom = z;
+          if (btnZoomReset) {
+            btnZoomReset.textContent = `${Math.round(z * 100)}%`;
+          }
+          applyView();
+        }
+
+        btnCircular?.addEventListener("click", () => setLayout("circular"));
+        btnLinear?.addEventListener("click", () => setLayout("linear"));
+        btnZoomIn?.addEventListener("click", () => setZoom(view.zoom * 1.2));
+        btnZoomOut?.addEventListener("click", () => setZoom(view.zoom / 1.2));
+        btnZoomReset?.addEventListener("click", () => {
+          view.zoom = 1;
+          view.tx = 0;
+          view.ty = 0;
+          setZoom(1);
+        });
+
+        svg.addEventListener("wheel", (event) => {
+          event.preventDefault();
+          const delta = event.deltaY > 0 ? 0.92 : 1.08;
+          const nextZoom = clamp(view.zoom * delta, view.minZoom, view.maxZoom);
+          const rect = svg.getBoundingClientRect();
+          const mx = event.clientX - rect.left;
+          const my = event.clientY - rect.top;
+          view.tx = mx - (mx - view.tx) * (nextZoom / view.zoom);
+          view.ty = my - (my - view.ty) * (nextZoom / view.zoom);
+          setZoom(nextZoom);
+        }, {passive: false});
+
+        svg.addEventListener("mousedown", (event) => {
+          if (event.button !== 0) return;
+          if (event.target !== svg) return;
+          view.dragging = true;
+          view.startX = event.clientX;
+          view.startY = event.clientY;
+          view.baseTx = view.tx;
+          view.baseTy = view.ty;
+          svg.style.cursor = "grabbing";
+        });
+
+        svg.addEventListener("mousemove", (event) => {
+          if (!view.dragging) return;
+          const dx = event.clientX - view.startX;
+          const dy = event.clientY - view.startY;
+          view.tx = view.baseTx + dx;
+          view.ty = view.baseTy + dy;
+          applyView();
+        });
+
+        window.addEventListener("mouseup", () => {
+          if (view.dragging) {
+            view.dragging = false;
+            svg.style.cursor = "default";
+          }
+        });
+
+        render();
+      })();
+    </script>
+    
+  </section>
+  {% endif %}
+
+  <section class="card p-3 shadow-sm mb-4 bg-white">
+    <h5 class="section-title">Top candidates</h5>
+    <div class="table-responsive">
+      <table class="table table-sm table-hover align-middle">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>insert start</th>
+            <th>insert end</th>
+            <th>score</th>
+            <th>risk</th>
+            <th>strategy</th>
+            <th>전략 상세</th>
+            <th>vector PCR 프라이머(상위)</th>
+            <th>closest feature</th>
+            <th>distance(bp)</th>
+            <th>reasons</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for c in result.candidates %}
+          <tr>
+            <td>{{ loop.index }}</td>
+            <td>{{ c.insert_start_1based }}</td>
+            <td>{{ c.insert_end_1based }}</td>
+            <td>{{ "%.3f"|format(c.score) }}</td>
+            <td>{{ "%.3f"|format(c.risk) }}</td>
+            <td>{{ c.strategy }}</td>
+            <td>{{ c.strategy_summary or "-" }}</td>
+            <td>
+              {% if c.primer_pairs %}
+                {% set first_pair = c.primer_pairs[0] %}
+                {% set lmeta = first_pair.pair_meta.left if (first_pair.pair_meta and first_pair.pair_meta.left is not none) else (first_pair.pair_meta.candidate_left if (first_pair.pair_meta and first_pair.pair_meta.candidate_left is not none) else none) %}
+                {% set rmeta = first_pair.pair_meta.right if (first_pair.pair_meta and first_pair.pair_meta.right is not none) else (first_pair.pair_meta.candidate_right if (first_pair.pair_meta and first_pair.pair_meta.candidate_right is not none) else none) %}
+                {% if lmeta and lmeta.name is defined %}
+                  {% set lnm = lmeta.name %}
+                {% elif lmeta and lmeta.primer_id is defined %}
+                  {% set lnm = lmeta.primer_id %}
+                {% else %}
+                  {% set lnm = '-' %}
+                {% endif %}
+                {% if rmeta and rmeta.name is defined %}
+                  {% set rnm = rmeta.name %}
+                {% elif rmeta and rmeta.primer_id is defined %}
+                  {% set rnm = rmeta.primer_id %}
+                {% else %}
+                  {% set rnm = '-' %}
+                {% endif %}
+                <div class="small">
+                  <div><strong>L:</strong> {{ lnm }} ({{ first_pair.left_seq }})</div>
+                  <div><strong>R:</strong> {{ rnm }} ({{ first_pair.right_seq }})</div>
+                  <div class="text-muted">size={{ first_pair.score_breakdown.product_size }}, Tm={{ first_pair.left_tm }} / {{ first_pair.right_tm }}, uniq={{ 'Y' if first_pair.unique else 'N' }}</div>
+                </div>
+              {% else %}
+                -
+              {% endif %}
+            </td>
+            <td>{{ c.closest_feature or "-" }}</td>
+            <td>{{ c.feature_distance_bp if c.feature_distance_bp is not none else "-" }}</td>
+            <td>
+              <div class="reason-list">
+                {% for r in c.reasons %}
+                  <div>- {{ r }}</div>
+                {% endfor %}
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card p-3 shadow-sm bg-white">
+    <h5 class="section-title">결과 JSON</h5>
+    <button class="btn btn-outline-primary btn-sm mb-2" onclick="copyResultJson()">JSON 복사</button>
+    <pre id="resultJson" class="bg-light p-2 border rounded">{{ result|tojson(indent=2) }}</pre>
+  </section>
+  {% endif %}
+
+  </section>
+
+  <section id="primerTab" class="tool-tab">
+    <div class="card p-3 shadow-sm bg-white tool-tile">
+      <h5 class="section-title">PrimerMaker 통합 탭</h5>
+      <p class="text-muted">primer_maker의 기존 기능(WebUI)로 직접 진입합니다. vector PCR에 적합한 프라이머 선별은 현재 삽입 플래너 탭에서 동일한 GB 입력으로 확인할 수 있습니다.</p>
+      <div class="mb-2 d-flex flex-wrap gap-2 align-items-center">
+        <span class="tool-badge stopped" id="primerToolBadge"></span>
+        <strong id="primerToolStatus">확인 중...</strong>
+        <span id="primerToolInfo" class="text-muted tool-status-log"></span>
+        <button type="button" class="btn btn-sm btn-outline-primary tool-start" data-tool="primer_maker">도구 실행</button>
+        <button type="button" class="btn btn-sm btn-outline-danger tool-stop" data-tool="primer_maker">도구 종료</button>
+        <a id="primerToolOpen" class="btn btn-sm btn-outline-success" target="_blank" href="#" rel="noopener">새 탭에서 열기</a>
+      </div>
+      <iframe id="primerToolFrame" class="tool-frame d-none" title="PrimerMaker"></iframe>
+      <div id="primerToolUnavailable" class="alert alert-warning d-none"></div>
+    </div>
+  </section>
+
+  <section id="rbsTab" class="tool-tab">
+    <div class="card p-3 shadow-sm bg-white tool-tile">
+      <h5 class="section-title">RBS_cal 통합 탭</h5>
+      <p class="text-muted">기존 RBS_cal WebUI를 이 화면에서 직접 실행/종료/미리보기합니다.</p>
+      <div class="mb-2 d-flex flex-wrap gap-2 align-items-center">
+        <span class="tool-badge stopped" id="rbsToolBadge"></span>
+        <strong id="rbsToolStatus">확인 중...</strong>
+        <span id="rbsToolInfo" class="text-muted tool-status-log"></span>
+        <button type="button" class="btn btn-sm btn-outline-primary tool-start" data-tool="rbs_cal">도구 실행</button>
+        <button type="button" class="btn btn-sm btn-outline-danger tool-stop" data-tool="rbs_cal">도구 종료</button>
+        <a id="rbsToolOpen" class="btn btn-sm btn-outline-success" target="_blank" href="#" rel="noopener">새 탭에서 열기</a>
+      </div>
+      <iframe id="rbsToolFrame" class="tool-frame d-none" title="RBS_cal"></iframe>
+      <div id="rbsToolUnavailable" class="alert alert-warning d-none"></div>
+    </div>
+  </section>
+
+  <section id="dh5aTab" class="tool-tab">
+    <div class="card p-3 shadow-sm bg-white tool-tile">
+      <h5 class="section-title">DH5a-UTG 통합 탭</h5>
+      <p class="text-muted">기존 DH5a-UTG WebUI를 이 화면에서 직접 실행/종료/미리보기합니다.</p>
+      <div class="mb-2 d-flex flex-wrap gap-2 align-items-center">
+        <span class="tool-badge stopped" id="dh5aToolBadge"></span>
+        <strong id="dh5aToolStatus">확인 중...</strong>
+        <span id="dh5aToolInfo" class="text-muted tool-status-log"></span>
+        <button type="button" class="btn btn-sm btn-outline-primary tool-start" data-tool="dh5a_utg">도구 실행</button>
+        <button type="button" class="btn btn-sm btn-outline-danger tool-stop" data-tool="dh5a_utg">도구 종료</button>
+        <a id="dh5aToolOpen" class="btn btn-sm btn-outline-success" target="_blank" href="#" rel="noopener">새 탭에서 열기</a>
+      </div>
+      <iframe id="dh5aToolFrame" class="tool-frame d-none" title="DH5a-UTG"></iframe>
+      <div id="dh5aToolUnavailable" class="alert alert-warning d-none"></div>
+    </div>
+  </section>
+</div>
+<script>
+  const TOOL_KEYS = ["primer_maker", "rbs_cal", "dh5a_utg"];
+
+  const tabButtons = document.querySelectorAll("[data-tab]");
+  const toolButtonsStart = document.querySelectorAll(".tool-start");
+  const toolButtonsStop = document.querySelectorAll(".tool-stop");
+  const APP_ROOT = {{ (script_root_path or "") | tojson }};
+  const apiPath = (path) => `${APP_ROOT}${path.startsWith("/") ? path : `/${path}`}`;
+
+  function setActiveTab(targetTabId) {
+    document.querySelectorAll(".tool-tab").forEach((panel) => {
+      if (panel.id === targetTabId) {
+        panel.classList.add("active");
+      } else {
+        panel.classList.remove("active");
+      }
+    });
+    tabButtons.forEach((btn) => {
+      const isActive = btn.getAttribute("data-tab") === targetTabId;
+      btn.classList.toggle("btn-primary", isActive);
+      btn.classList.toggle("btn-outline-primary", !isActive);
+    });
+  }
+
+  tabButtons.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const targetTab = btn.getAttribute("data-tab");
+      if (targetTab) {
+        setActiveTab(targetTab);
+      }
+    });
+  });
+
+  const toolState = {};
+
+  function updateToolUI(tool, payload, unavailableText = "") {
+    toolState[tool] = payload;
+    const statusText = payload.available === false
+      ? "미설치"
+      : (payload.running ? "실행중" : "중지됨");
+    const statusStyle = payload.running ? "running" : "stopped";
+    const badge = document.getElementById(`${tool}ToolBadge`);
+    const status = document.getElementById(`${tool}ToolStatus`);
+    const info = document.getElementById(`${tool}ToolInfo`);
+    const openBtn = document.getElementById(`${tool}ToolOpen`);
+    const frame = document.getElementById(`${tool}ToolFrame`);
+    const unavailable = document.getElementById(`${tool}ToolUnavailable`);
+
+    if (badge) {
+      badge.classList.remove("running", "stopped");
+      badge.classList.add(statusStyle);
+    }
+    if (status) {
+      status.textContent = statusText;
+    }
+    if (info) {
+      const pieces = [];
+      if (payload.port) {
+        pieces.push(`port=${payload.port}`);
+      }
+      if (payload.pid) {
+        pieces.push(`pid=${payload.pid}`);
+      }
+      info.textContent = pieces.join(" / ");
+    }
+    if (openBtn) {
+      openBtn.href = payload.available === false ? "#" : `http://${payload.host || "127.0.0.1"}:${payload.port || payload.default_port}`;
+      openBtn.classList.toggle("disabled", payload.available === false);
+      if (payload.available === false) {
+        openBtn.setAttribute("aria-disabled", "true");
+        openBtn.tabIndex = -1;
+      } else {
+        openBtn.removeAttribute("aria-disabled");
+        openBtn.removeAttribute("tabindex");
+      }
+    }
+
+    if (frame) {
+      if (payload.running) {
+        frame.src = `http://${payload.host || "127.0.0.1"}:${payload.port}`;
+        frame.classList.remove("d-none");
+      } else {
+        frame.classList.add("d-none");
+        frame.removeAttribute("src");
+      }
+    }
+
+    if (unavailable) {
+      if (unavailableText) {
+        unavailable.classList.remove("d-none");
+        unavailable.textContent = unavailableText;
+      } else {
+        unavailable.classList.add("d-none");
+      }
+    }
+  }
+
+  async function refreshToolsStatus() {
+    try {
+      const resp = await fetch(apiPath("/api/tools/status"));
+      const data = await resp.json();
+      if (!resp.ok || !data.ok) {
+        TOOL_KEYS.forEach((tool) => {
+          updateToolUI(tool, {available: false, running: false, name: tool, port: "-", host: "127.0.0.1"}, data.error || "상태 조회 실패");
+        });
+        return;
+      }
+      const map = {};
+      for (const tool of data.tools || []) {
+        map[tool.key] = tool;
+      }
+      TOOL_KEYS.forEach((tool) => {
+        updateToolUI(tool, map[tool] || {available: false, running: false, name: tool, port: "-", host: "127.0.0.1"}, map[tool] ? "" : "도구 설정을 불러오지 못했습니다.");
+      });
+    } catch (err) {
+      TOOL_KEYS.forEach((tool) => {
+        updateToolUI(tool, {available: false, running: false, name: tool, port: "-", host: "127.0.0.1"}, String(err));
+      });
+    }
+  }
+
+  async function startTool(tool) {
+    const openBtn = document.getElementById(`${tool}ToolOpen`);
+    const payload = {available: false, running: false, host: "127.0.0.1", port: "-", name: tool};
+    if (openBtn) {
+      openBtn.textContent = "시작 중...";
+    }
+    try {
+      const resp = await fetch(apiPath(`/api/tools/${tool}/start`), {method: "POST"});
+      const data = await resp.json();
+      if (!resp.ok || !data.ok) {
+        if (openBtn) {
+          openBtn.textContent = "새 탭에서 열기";
+        }
+        updateToolUI(tool, data, data.error || "도구 시작 실패");
+        return;
+      }
+      const key = data.name || tool;
+      const item = Object.assign({}, payload, data.tools ? data.tools.find((item) => item.key === key) : null, data);
+      updateToolUI(item.key || tool, item, item.available === false ? "도구 시작 실패" : "");
+    } catch (err) {
+      if (openBtn) {
+        openBtn.textContent = "새 탭에서 열기";
+      }
+      updateToolUI(tool, payload, String(err));
+    }
+    if (openBtn) {
+      openBtn.textContent = "새 탭에서 열기";
+    }
+  }
+
+  async function stopTool(tool) {
+    try {
+      const resp = await fetch(apiPath(`/api/tools/${tool}/stop`), {method: "POST"});
+      const data = await resp.json();
+      if (!resp.ok || !data.ok) {
+        updateToolUI(tool, {available: true, running: false, host: "127.0.0.1", port: "-", name: tool}, data.error || "도구 종료 실패");
+        return;
+      }
+      const item = (data.tools || []).find((item) => item.key === tool);
+      updateToolUI(tool, item || {available: true, running: false, host: "127.0.0.1", port: item && item.default_port ? item.default_port : "-", name: tool}, "");
+    } catch (err) {
+      updateToolUI(tool, {available: true, running: false, host: "127.0.0.1", port: "-", name: tool}, String(err));
+    }
+  }
+
+  toolButtonsStart.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const tool = btn.getAttribute("data-tool");
+      if (tool) {
+        startTool(tool);
+      }
+    });
+  });
+  toolButtonsStop.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const tool = btn.getAttribute("data-tool");
+      if (tool) {
+        stopTool(tool);
+      }
+    });
+  });
+
+  refreshToolsStatus();
+  window.setInterval(refreshToolsStatus, 5000);
+
+  // 페이지 진입 직후 planner 탭 유지
+  setActiveTab("plannerTab");
+</script>
+
+<script>
+  function getFormValue(name) {
+    const el = document.querySelector(`[name="${name}"]`);
+    if (!el) return "";
+    if (el.type === "checkbox") return el.checked ? "on" : "";
+    return el.value || "";
+  }
+
+  const modeSelect = document.getElementById("insertInputMode");
+  const insertSequenceGroup = document.getElementById("insertSequenceGroup");
+  const insertFileGroup = document.getElementById("insertFileGroup");
+  const insertSequenceInput = document.getElementById("insertSequenceInput");
+  const insertFileInput = document.getElementById("insertFileInput");
+  const insertLengthInput = document.getElementById("insertLengthInput");
+  const insertGcInput = document.getElementById("insertGcInput");
+  const insertExtremeGcInput = document.getElementById("insertExtremeGcInput");
+  const insertRepeatInput = document.getElementById("insertRepeatInput");
+  const insertWarnings = document.getElementById("insertWarnings");
+  const gbFileInput = document.getElementById("genbankFileInput");
+  const previewCard = document.getElementById("backbonePreviewCard");
+  const previewStatus = document.getElementById("backbonePreviewStatus");
+  const previewWrap = document.getElementById("backbonePreviewWrap");
+  const previewImg = document.getElementById("backbonePreview");
+  const previewMeta = document.getElementById("backbonePreviewMeta");
+
+  function applyInsertMode() {
+    if (!modeSelect) return;
+    const useFile = modeSelect.value === "file";
+    if (insertSequenceGroup) {
+      insertSequenceGroup.classList.toggle("d-none", useFile);
+    }
+    if (insertFileGroup) {
+      insertFileGroup.classList.toggle("d-none", !useFile);
+    }
+    if (!useFile && insertFileInput) {
+      insertFileInput.value = "";
+    }
+    if (useFile && insertSequenceInput) {
+      insertSequenceInput.value = "";
+      updateInsertFieldsFromText("");
+    }
+    resetInsertWarnings();
+  }
+
+  function resetInsertWarnings() {
+    if (insertWarnings) {
+      insertWarnings.textContent = "";
+    }
+  }
+
+  function cleanInsertInput(raw, mode) {
+    const text = (raw || "").toUpperCase();
+    if (!text) return {seq: "", filtered: "", warning: null};
+    if (mode === "fasta" || text.trim().startsWith(">")) {
+      const lines = text.split(/\r?\n/);
+      const seq = lines
+        .filter((line) => line && !line.startsWith(">"))
+        .join("")
+        .replace(/[^ACGTU]/g, "");
+      if (!seq) {
+        return {seq: "", filtered: "", warning: "FASTA 헤더만 존재하거나 유효 염기가 없습니다."};
+      }
+      return {seq: seq.replace(/U/g, "T"), filtered: seq, warning: null};
+    }
+
+    const filtered = text.replace(/[^ACGTU]/g, "");
+    if (!filtered) {
+      return {seq: "", filtered: "", warning: "ACGT만 추출되지 않았습니다."};
+    }
+    return {seq: filtered.replace(/U/g, "T"), filtered, warning: filtered !== text.replace(/\s/g, "") ? "비염기 문자가 제거되었습니다." : null};
+  }
+
+  function computeInsertStats(seq) {
+    const n = seq.length;
+    if (!n) {
+      return {length_bp: 0, gc_content: null, gc_extreme: null, repeat_like: 0.0, warnings: ["삽입 서열이 비어 있습니다."]};
+    }
+    let gcCount = 0;
+    for (const ch of seq) {
+      if (ch === "G" || ch === "C") {
+        gcCount += 1;
+      }
+    }
+    const gc = gcCount / n;
+    const maxWindow = Math.min(20, n);
+    let extreme = gc;
+    if (maxWindow > 1) {
+      let best = 0.0;
+      for (let i = 0; i + maxWindow <= n; i += 1) {
+        let windowGc = 0;
+        for (let j = i; j < i + maxWindow; j += 1) {
+          const ch = seq[j];
+          if (ch === "G" || ch === "C") {
+            windowGc += 1;
+          }
+        }
+        const local = windowGc / maxWindow;
+        best = Math.max(best, Math.abs(local - 0.5));
+      }
+      extreme = n <= maxWindow ? Math.abs(gc - 0.5) : best;
+    }
+    let run = 1;
+    let repeatLike = 0.0;
+    for (let i = 1; i <= seq.length; i += 1) {
+      if (i < seq.length && seq[i] === seq[i - 1]) {
+        run += 1;
+      } else {
+        if (run >= 5) {
+          repeatLike += (run - 4) / seq.length;
+        }
+        run = 1;
+      }
+    }
+    repeatLike = Math.min(1.0, Math.max(0.0, repeatLike));
+    return {
+      length_bp: n,
+      gc_content: Math.round(gc * 10000) / 10000,
+      gc_extreme: Math.round(extreme * 10000) / 10000,
+      repeat_like: Math.round(repeatLike * 10000) / 10000,
+      warnings: [],
+    };
+  }
+
+  function updateInsertFieldsFromText(raw) {
+    if (!insertLengthInput || !insertGcInput || !insertExtremeGcInput || !insertRepeatInput) return;
+    const parsed = cleanInsertInput(raw, raw.includes("\n") || raw.trim().startsWith(">") ? "fasta" : "sequence");
+    const nextWarnings = [];
+    if (parsed.warning) {
+      nextWarnings.push(parsed.warning);
+    }
+    const stats = computeInsertStats(parsed.seq);
+    insertLengthInput.value = String(stats.length_bp);
+    insertGcInput.value = stats.gc_content === null ? "" : stats.gc_content.toFixed(4);
+    insertExtremeGcInput.value = stats.gc_extreme === null ? "" : stats.gc_extreme.toFixed(4);
+    insertRepeatInput.value = (stats.repeat_like || 0).toFixed(4);
+    if (parsed.warning) {
+      nextWarnings.push(...stats.warnings);
+    } else if (stats.length_bp > 0 && parsed.filtered.length !== raw.replace(/[^ACGTU\n\r>\s]/gi, "").replace(/\s+/g, "").length) {
+      nextWarnings.push("비염기 문자는 제외되고 계산되었습니다.");
+    }
+    if (insertWarnings) {
+      insertWarnings.textContent = nextWarnings.length ? nextWarnings.join(" / ") : "";
+    }
+  }
+
+  let insertSequenceTimer = null;
+  function debouncedAnalyzeInsertByText() {
+    if (insertSequenceTimer) {
+      clearTimeout(insertSequenceTimer);
+    }
+    insertSequenceTimer = setTimeout(() => {
+      updateInsertFieldsFromText(insertSequenceInput ? insertSequenceInput.value : "");
+    }, 120);
+  }
+
+  async function analyzeInsertFromServer() {
+    if (!insertFileInput || !insertFileInput.files || !insertFileInput.files[0]) {
+      if (insertLengthInput) insertLengthInput.value = "0";
+      if (insertGcInput) insertGcInput.value = "";
+      if (insertExtremeGcInput) insertExtremeGcInput.value = "";
+      if (insertRepeatInput) insertRepeatInput.value = "0.0000";
+      resetInsertWarnings();
+      return;
+    }
+    const form = new FormData();
+    form.append("insert_input_mode", "file");
+    form.append("insert_file", insertFileInput.files[0]);
+    form.append("toxic", document.getElementById("toxic") && document.getElementById("toxic").checked ? "on" : "");
+    try {
+      const resp = await fetch(apiPath("/api/analyze_insert"), {method: "POST", body: form});
+      const data = await resp.json();
+      if (!resp.ok || !data.ok) {
+        if (insertWarnings) {
+          insertWarnings.textContent = data.error || "삽입 서열 분석에 실패했습니다.";
+        }
+        return;
+      }
+      const m = data.insert_metadata || {};
+      if (insertLengthInput) insertLengthInput.value = m.length_bp || 0;
+      if (insertGcInput) insertGcInput.value = m.gc_content !== null && m.gc_content !== undefined ? Number(m.gc_content).toFixed(4) : "";
+      if (insertExtremeGcInput) insertExtremeGcInput.value = m.gc_extreme !== null && m.gc_extreme !== undefined ? Number(m.gc_extreme).toFixed(4) : "";
+      if (insertRepeatInput) insertRepeatInput.value = m.repeat_like !== null && m.repeat_like !== undefined ? Number(m.repeat_like).toFixed(4) : "0.0000";
+      if (insertWarnings) {
+        const warns = (data.warnings || []).filter(Boolean);
+        insertWarnings.textContent = warns.length ? warns.join(" / ") : "삽입 파일 분석 완료";
+      }
+    } catch (err) {
+      if (insertWarnings) {
+        insertWarnings.textContent = `삽입 파일 분석 실패: ${err}`;
+      }
+    }
+  }
+
+  async function requestBackbonePreview(file) {
+    if (!file) {
+      return;
+    }
+    if (!previewCard || !previewStatus || !previewWrap || !previewImg || !previewMeta) {
+      return;
+    }
+    previewCard.classList.remove("d-none");
+    previewStatus.textContent = "플라스미드 미리보기 생성 중...";
+    const form = new FormData(document.getElementById("plannerForm") || document.querySelector("form"));
+    form.set("genbank_file", file);
+    // keep settings required for preview
+    if (form.get("mode") == null) form.set("mode", document.querySelector('[name=\"mode\"]')?.value || "neutral");
+    if (form.get("buffer") == null || form.get("buffer") === "") form.set("buffer", "100");
+    try {
+      const resp = await fetch(apiPath("/api/preview_backbone"), {method: "POST", body: form});
+      const data = await resp.json();
+      if (!resp.ok || !data.ok || !data.image) {
+        const message = data.error || "플라스미드 미리보기 생성 실패";
+        previewStatus.textContent = message;
+        previewWrap.classList.add("d-none");
+        previewMeta.textContent = "";
+        return;
+      }
+      previewImg.src = data.image;
+      previewWrap.classList.remove("d-none");
+      previewStatus.textContent = "플라스미드 미리보기가 갱신되었습니다.";
+      previewMeta.textContent = `${data.sequence_id || "plasmid"} / 길이 ${data.length || 0} / ${data.topology || "circular"} / ${data.renderer || "legacy"}`;
+      if ((data.warnings || []).length) {
+        previewStatus.textContent = `${previewStatus.textContent} (주의: ${data.warnings.join(" / ")})`;
+      }
+    } catch (err) {
+      previewStatus.textContent = `미리보기 요청 실패: ${err}`;
+      previewWrap.classList.add("d-none");
+      previewMeta.textContent = "";
+    }
+  }
+
+  if (modeSelect) {
+    modeSelect.addEventListener("change", applyInsertMode);
+    applyInsertMode();
+  }
+
+  if (insertSequenceInput) {
+    insertSequenceInput.addEventListener("input", debouncedAnalyzeInsertByText);
+  }
+
+  if (insertFileInput) {
+    insertFileInput.addEventListener("change", analyzeInsertFromServer);
+  }
+
+  if (gbFileInput) {
+    gbFileInput.addEventListener("change", () => {
+      const file = gbFileInput.files && gbFileInput.files[0];
+      requestBackbonePreview(file);
+    });
+  }
+
+  // 초기 상태에서 입력된 값이 있으면 계산
+  if (insertSequenceInput && insertSequenceInput.value) {
+    updateInsertFieldsFromText(insertSequenceInput.value);
+  }
+
+  const sanityBtn = document.getElementById('runSanity');
+  if (sanityBtn) {
+    sanityBtn.addEventListener('click', async () => {
+      document.getElementById('sanityStatus').textContent = 'running...';
+      const pre = document.getElementById('sanityResult');
+      try {
+        const res = await fetch(apiPath("/api/sanity"));
+        const data = await res.json();
+        pre.classList.remove('d-none');
+        pre.textContent = JSON.stringify(data, null, 2);
+        document.getElementById('sanityStatus').textContent = data.ok ? 'PASS' : 'FAIL';
+      } catch (err) {
+        document.getElementById('sanityStatus').textContent = 'error';
+        pre.classList.remove('d-none');
+        pre.textContent = String(err);
+      }
+    });
+  }
+
+  function copyResultJson() {
+    const text = document.getElementById('resultJson').textContent;
+    navigator.clipboard.writeText(text).catch(() => {});
+  }
+</script>
+</body>
+</html>

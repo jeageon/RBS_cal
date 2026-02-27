@@ -1,0 +1,4 @@
+Flask>=3.0
+biopython>=1.83
+matplotlib>=3.8
+dna-features-viewer>=3.1
